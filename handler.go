@@ -1,10 +1,10 @@
-package beam
+package libchan
 
 import (
 	"fmt"
 )
 
-type Handler func(msg *Message) error
+type Handler func(msg *Message)
 
 func (h Handler) Send(msg *Message) (Receiver, error) {
 	var ret Receiver
@@ -17,10 +17,7 @@ func (h Handler) Send(msg *Message) (Receiver, error) {
 		if msg.Ret == nil {
 			msg.Ret = NopSender{}
 		}
-		err := h(msg)
-		if err != nil {
-			Obj(msg.Ret).Error("%v", err)
-		}
+		h(msg)
 		msg.Ret.Close()
 	}()
 	return ret, nil

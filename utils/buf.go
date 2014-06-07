@@ -6,7 +6,7 @@ import (
 
 type Buffer []*beam.Message
 
-func (buf *Buffer) Send(msg *beam.Message) (beam.Receiver, error) {
+func (buf *Buffer) Send(msg *beam.Message) (libchan.Receiver, error) {
 	(*buf) = append(*buf, msg)
 	return beam.NopReceiver{}, nil
 }
