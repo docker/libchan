@@ -1,7 +1,7 @@
 package unix
 
 import (
-	"github.com/docker/libswarm/beam"
+	lch "github.com/docker/libchan"
 	"github.com/dotcloud/docker/pkg/testutils"
 	"testing"
 )
@@ -19,14 +19,11 @@ func TestPair(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if msg.Verb != beam.Log {
-				t.Fatalf("%#v", *msg)
-			}
-			if msg.Args[0] != "hello world" {
+			if string(msg.Data) != "hello world" {
 				t.Fatalf("%#v", *msg)
 			}
 		}()
-		_, err := w.Send(&beam.Message{Verb: beam.Log, Args: []string{"hello world"}})
+		_, err := w.Send(&lch.Message{Data: []byte("hello world")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -44,7 +41,7 @@ func TestSendReply(t *testing.T) {
 		// Send
 		go func() {
 			// Send a message with mode=R
-			ret, err := w.Send(&beam.Message{Args: []string{"this is the request"}, Ret: beam.RetPipe})
+			ret, err := w.Send(&lch.Message{Data: []byte("this is the request"), Ret: lch.RetPipe})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,20 +50,20 @@ func TestSendReply(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if msg.Args[0] != "this is the reply" {
+			if string(msg.Data) != "this is the reply" {
 				t.Fatalf("%#v", msg)
 			}
 		}()
 		// Receive a message with mode=W
-		msg, err := r.Receive(beam.Ret)
+		msg, err := r.Receive(lch.Ret)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if msg.Args[0] != "this is the request" {
+		if string(msg.Data) != "this is the request" {
 			t.Fatalf("%#v", msg)
 		}
 		// Send a reply
-		_, err = msg.Ret.Send(&beam.Message{Args: []string{"this is the reply"}})
+		_, err = msg.Ret.Send(&lch.Message{Data: []byte("this is the reply")})
 		if err != nil {
 			t.Fatal(err)
 		}

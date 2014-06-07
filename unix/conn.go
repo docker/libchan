@@ -3,10 +3,8 @@ package unix
 import (
 	"fmt"
 	"os"
-	"strconv"
 
-	"github.com/docker/libswarm/beam"
-	"github.com/docker/libswarm/beam/data"
+	lch "github.com/docker/libchan"
 )
 
 func Pair() (*Conn, *Conn, error) {
@@ -43,7 +41,7 @@ func sendablePair() (conn *UnixConn, remoteFd *os.File, err error) {
 	return conn, remote, nil
 }
 
-// This implements beam.Sender.Close which *only closes the sender*.
+// This implements lch.Sender.Close which *only closes the sender*.
 // This is similar to the pattern of only closing go channels from
 // the sender's side.
 // If you want to close the entire connection, call Conn.UnixConn.Close.
@@ -51,21 +49,18 @@ func (c *Conn) Close() error {
 	return c.UnixConn.CloseWrite()
 }
 
-func (c *Conn) Send(msg *beam.Message) (beam.Receiver, error) {
-	if msg.Att != nil {
+func (c *Conn) Send(msg *lch.Message) (lch.Receiver, error) {
+	if msg.Fd != nil {
 		return nil, fmt.Errorf("file attachment not yet implemented in unix transport")
 	}
-	parts := []string{fmt.Sprintf("%d", msg.Verb)}
-	parts = append(parts, msg.Args...)
-	b := []byte(data.EncodeList(parts))
 	// Setup nested streams
 	var (
 		fd  *os.File
-		ret beam.Receiver
+		ret lch.Receiver
 		err error
 	)
 	// Caller requested a return pipe
-	if beam.RetPipe.Equals(msg.Ret) {
+	if lch.RetPipe.Equals(msg.Ret) {
 		local, remote, err := sendablePair()
 		if err != nil {
 			return nil, err
@@ -94,38 +89,24 @@ func (c *Conn) Send(msg *beam.Message) (beam.Receiver, error) {
 				// Copy messages from the remote return channel to the local return channel.
 				// When the remote return channel is closed, also close the local return channel.
 				localConn := &Conn{local}
-				beam.Copy(msg.Ret, localConn)
+				lch.Copy(msg.Ret, localConn)
 				msg.Ret.Close()
 				localConn.Close()
 			}()
 		}
 	}
-	if err := c.UnixConn.Send(b, fd); err != nil {
+	if err := c.UnixConn.Send(msg.Data, fd); err != nil {
 		return nil, err
 	}
 	return ret, nil
 }
 
-func (c *Conn) Receive(mode int) (*beam.Message, error) {
+func (c *Conn) Receive(mode int) (*lch.Message, error) {
 	b, fd, err := c.UnixConn.Receive()
 	if err != nil {
 		return nil, err
 	}
-	parts, n, err := data.DecodeList(string(b))
-	if err != nil {
-		return nil, err
-	}
-	if n != len(b) {
-		return nil, fmt.Errorf("garbage data %#v", b[:n])
-	}
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("malformed message")
-	}
-	v, err := strconv.ParseUint(parts[0], 10, 32)
-	if err != nil {
-		return nil, err
-	}
-	msg := &beam.Message{Verb: beam.Verb(v), Args: parts[1:]}
+	msg := &lch.Message{Data: b}
 
 	// Apply mode mask
 	if fd != nil {
@@ -134,7 +115,7 @@ func (c *Conn) Receive(mode int) (*beam.Message, error) {
 			return nil, err
 		}
 		fd.Close()
-		if mode&beam.Ret != 0 {
+		if mode&lch.Ret != 0 {
 			msg.Ret = &Conn{subconn}
 		} else {
 			subconn.CloseWrite()
