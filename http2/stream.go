@@ -1,29 +1,14 @@
 package http2
 
 import (
+	"encoding/base64"
 	"fmt"
-	"github.com/docker/libswarm/beam"
+	"github.com/docker/libchan"
 	"github.com/docker/spdystream"
 	"net"
 	"net/http"
 	"sync"
 )
-
-var verbs = map[string]beam.Verb{
-	"Ack":     beam.Ack,
-	"Attach":  beam.Attach,
-	"Connect": beam.Connect,
-	"Error":   beam.Error,
-	"File":    beam.File,
-	"Get":     beam.Get,
-	"Log":     beam.Log,
-	"Ls":      beam.Ls,
-	"Set":     beam.Set,
-	"Spawn":   beam.Spawn,
-	"Start":   beam.Start,
-	"Stop":    beam.Stop,
-	"Watch":   beam.Watch,
-}
 
 // Only allows sending, no parent stream
 type StreamSession struct {
@@ -71,20 +56,19 @@ func NewStreamSession(conn net.Conn) (*StreamSession, error) {
 	return session, nil
 }
 
-func (s *StreamSession) Send(msg *beam.Message) (ret beam.Receiver, err error) {
-	if msg.Att != nil {
+func (s *StreamSession) Send(msg *libchan.Message) (ret libchan.Receiver, err error) {
+	if msg.Fd != nil {
 		return nil, fmt.Errorf("file attachment not yet implemented for spdy transport")
 	}
 
 	var fin bool
-	if beam.RetPipe.Equals(msg.Ret) {
+	if libchan.RetPipe.Equals(msg.Ret) {
 		fin = false
 	} else {
 		fin = true
 	}
 	headers := http.Header{
-		"Verb": []string{msg.Verb.String()},
-		"Args": []string{encodeArgs(msg.Args)},
+		"Data": []string{base64.URLEncoding.EncodeToString(msg.Data)},
 	}
 	stream, streamErr := s.conn.CreateStream(headers, nil, fin)
 	if streamErr != nil {
@@ -94,10 +78,10 @@ func (s *StreamSession) Send(msg *beam.Message) (ret beam.Receiver, err error) {
 	streamChan := make(chan *spdystream.Stream)
 	s.subStreamChans[stream.String()] = streamChan
 
-	if beam.RetPipe.Equals(msg.Ret) {
+	if libchan.RetPipe.Equals(msg.Ret) {
 		ret = &StreamReceiver{stream: stream, streamChans: s}
 	} else {
-		ret = &beam.NopReceiver{}
+		ret = &libchan.NopReceiver{}
 	}
 	return
 }
@@ -109,10 +93,10 @@ func (s *StreamSession) Close() error {
 type StreamReceiver struct {
 	stream      *spdystream.Stream
 	streamChans streamChanProvider
-	ret         beam.Sender
+	ret         libchan.Sender
 }
 
-func (s *StreamReceiver) Receive(mode int) (*beam.Message, error) {
+func (s *StreamReceiver) Receive(mode int) (*libchan.Message, error) {
 	waitErr := s.stream.Wait()
 	if waitErr != nil {
 		return nil, waitErr
@@ -127,20 +111,19 @@ type StreamSender struct {
 	streamChans streamChanProvider
 }
 
-func (s *StreamSender) Send(msg *beam.Message) (ret beam.Receiver, err error) {
-	if msg.Att != nil {
+func (s *StreamSender) Send(msg *libchan.Message) (ret libchan.Receiver, err error) {
+	if msg.Fd != nil {
 		return nil, fmt.Errorf("file attachment not yet implemented for spdy transport")
 	}
 
 	var fin bool
-	if beam.RetPipe.Equals(msg.Ret) {
+	if libchan.RetPipe.Equals(msg.Ret) {
 		fin = false
 	} else {
 		fin = true
 	}
 	headers := http.Header{
-		"Verb": []string{msg.Verb.String()},
-		"Args": []string{encodeArgs(msg.Args)},
+		"Data": []string{base64.URLEncoding.EncodeToString(msg.Data)},
 	}
 
 	stream, streamErr := s.stream.CreateSubStream(headers, fin)
@@ -151,10 +134,10 @@ func (s *StreamSender) Send(msg *beam.Message) (ret beam.Receiver, err error) {
 	streamChan := make(chan *spdystream.Stream)
 	s.streamChans.addStreamChan(stream, streamChan)
 
-	if beam.RetPipe.Equals(msg.Ret) {
+	if libchan.RetPipe.Equals(msg.Ret) {
 		ret = &StreamReceiver{stream: stream, streamChans: s.streamChans}
 	} else {
-		ret = beam.NopReceiver{}
+		ret = libchan.NopReceiver{}
 	}
 
 	return

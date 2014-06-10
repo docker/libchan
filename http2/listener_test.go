@@ -1,7 +1,8 @@
 package http2
 
 import (
-	"github.com/docker/libswarm/beam"
+	"bytes"
+	"github.com/docker/libchan"
 	"io"
 	"net"
 	"testing"
@@ -24,18 +25,18 @@ func TestListenSession(t *testing.T) {
 	end := make(chan bool)
 	go exerciseServer(t, listen, end)
 
-	msg, msgErr := session.Receive(beam.Ret)
+	msg, msgErr := session.Receive(libchan.Ret)
 	if msgErr != nil {
 		t.Fatalf("Error receiving message: %s", msgErr)
 	}
-	if msg.Att == nil {
+	if msg.Fd == nil {
 		t.Fatalf("Error message missing attachment")
 	}
-	if msg.Verb != beam.Attach {
-		t.Fatalf("Wrong verb\nActual: %s\nExpecting: %s", msg.Verb, beam.Attach)
+	if bytes.Compare(msg.Data, []byte("Attach")) != 0 {
+		t.Fatalf("Wrong verb\nActual: %s\nExpecting: %s", msg.Data, "Attach")
 	}
 
-	receiver, sendErr := msg.Ret.Send(&beam.Message{Verb: beam.Ack})
+	receiver, sendErr := msg.Ret.Send(&libchan.Message{Data: []byte("Ack")})
 	if sendErr != nil {
 		t.Fatalf("Error sending return message: %s", sendErr)
 	}
@@ -67,17 +68,17 @@ func exerciseServer(t *testing.T, server string, endChan chan bool) {
 		t.Fatalf("Error creating session: %s", sessionErr)
 	}
 
-	receiver, sendErr := session.Send(&beam.Message{Verb: beam.Attach, Ret: beam.RetPipe})
+	receiver, sendErr := session.Send(&libchan.Message{Data: []byte("Attach"), Ret: libchan.RetPipe})
 	if sendErr != nil {
 		t.Fatalf("Error sending message: %s", sendErr)
 	}
 
-	msg, receiveErr := receiver.Receive(beam.Ret)
+	msg, receiveErr := receiver.Receive(libchan.Ret)
 	if receiveErr != nil {
 		t.Fatalf("Error receiving message")
 	}
 
-	if msg.Verb != beam.Ack {
-		t.Fatalf("Wrong verb\nActual: %s\nExpecting: %s", msg.Verb, beam.Ack)
+	if bytes.Compare(msg.Data, []byte("Ack")) != 0 {
+		t.Fatalf("Wrong verb\nActual: %s\nExpecting: %s", msg.Data, "Ack")
 	}
 }

@@ -3,8 +3,7 @@ package http2
 import (
 	"encoding/base64"
 	"fmt"
-	"github.com/docker/libswarm/beam"
-	"github.com/docker/libswarm/beam/data"
+	"github.com/docker/libchan"
 	"github.com/docker/spdystream"
 	"io"
 	"net"
@@ -26,49 +25,19 @@ type streamChanProvider interface {
 	getStreamChan(stream *spdystream.Stream) chan *spdystream.Stream
 }
 
-func encodeArgs(args []string) string {
-	encoded := data.Encode(map[string][]string{"args": args})
-	return base64.URLEncoding.EncodeToString([]byte(encoded))
-}
-
-func decodeArgs(argString string) ([]string, error) {
-	decoded, decodeErr := base64.URLEncoding.DecodeString(argString)
-	if decodeErr != nil {
-		return []string{}, decodeErr
-	}
-	dataMap, dataErr := data.Decode(string(decoded))
-	if dataErr != nil {
-		return []string{}, dataErr
-	}
-	return dataMap["args"], nil
-}
-
-func createStreamMessage(stream *spdystream.Stream, mode int, streamChans streamChanProvider, ret beam.Sender) (*beam.Message, error) {
-	verbString := stream.Headers()["Verb"]
-	if len(verbString) != 1 {
-		if len(verbString) == 0 {
-			return nil, fmt.Errorf("Stream(%s) is missing verb header", stream)
+func createStreamMessage(stream *spdystream.Stream, mode int, streamChans streamChanProvider, ret libchan.Sender) (*libchan.Message, error) {
+	dataString := stream.Headers()["Data"]
+	if len(dataString) != 1 {
+		if len(dataString) == 0 {
+			return nil, fmt.Errorf("Stream(%s) is missing data header", stream)
 		} else {
-			return nil, fmt.Errorf("Stream(%s) has multiple verb headers", stream)
+			return nil, fmt.Errorf("Stream(%s) has multiple data headers", stream)
 		}
-
-	}
-	verb, verbOk := verbs[verbString[0]]
-	if !verbOk {
-		return nil, fmt.Errorf("Unknown verb: %s", verbString[0])
 	}
 
-	var args []string
-	argString := stream.Headers()["Args"]
-	if len(argString) > 1 {
-		return nil, fmt.Errorf("Stream(%s) has multiple args headers", stream)
-	}
-	if len(argString) == 1 {
-		var err error
-		args, err = decodeArgs(argString[0])
-		if err != nil {
-			return nil, err
-		}
+	data, decodeErr := base64.URLEncoding.DecodeString(dataString[0])
+	if decodeErr != nil {
+		return nil, decodeErr
 	}
 
 	var attach *os.File
@@ -92,18 +61,17 @@ func createStreamMessage(stream *spdystream.Stream, mode int, streamChans stream
 	}
 
 	retSender := ret
-	if retSender == nil || beam.RetPipe.Equals(retSender) {
+	if retSender == nil || libchan.RetPipe.Equals(retSender) {
 		retSender = &StreamSender{stream: stream, streamChans: streamChans}
 	}
 
-	if mode&beam.Ret == 0 {
+	if mode&libchan.Ret == 0 {
 		retSender.Close()
 	}
 
-	return &beam.Message{
-		Verb: verb,
-		Args: args,
-		Att:  attach,
+	return &libchan.Message{
+		Data: data,
+		Fd:   attach,
 		Ret:  retSender,
 	}, nil
 }
