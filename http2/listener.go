@@ -1,7 +1,7 @@
 package http2
 
 import (
-	"github.com/docker/libswarm/beam"
+	"github.com/docker/libchan"
 	"github.com/docker/spdystream"
 	"net"
 	"sync"
@@ -80,7 +80,7 @@ func (l *ListenSession) Shutdown() error {
 	return l.listener.Close()
 }
 
-func (l *ListenSession) Receive(mode int) (*beam.Message, error) {
+func (l *ListenSession) Receive(mode int) (*libchan.Message, error) {
 	stream := <-l.streamChan
 	return createStreamMessage(stream, mode, l, nil)
 }

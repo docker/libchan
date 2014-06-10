@@ -1,8 +1,8 @@
 package http2
 
 import (
-	//"bytes"
-	"github.com/docker/libswarm/beam"
+	"bytes"
+	"github.com/docker/libchan"
 	//"github.com/docker/spdystream"
 	"io"
 	"net"
@@ -28,50 +28,38 @@ func TestBeamSession(t *testing.T) {
 	}
 
 	// Ls interaction
-	receiver, sendErr := sender.Send(&beam.Message{Verb: beam.Ls, Ret: beam.RetPipe})
+	receiver, sendErr := sender.Send(&libchan.Message{Data: []byte("Ls"), Ret: libchan.RetPipe})
 	if sendErr != nil {
-		t.Fatalf("Error sending beam message: %s", sendErr)
+		t.Fatalf("Error sending libchan message: %s", sendErr)
 	}
 	message, receiveErr := receiver.Receive(0)
 	if receiveErr != nil {
-		t.Fatalf("Error receiving beam message: %s", receiveErr)
+		t.Fatalf("Error receiving libchan message: %s", receiveErr)
 	}
-	if message.Verb != beam.Set {
-		t.Errorf("Unexpected message name:\nActual: %s\nExpected: %s", message.Verb, beam.Ls.String())
-	}
-	if len(message.Args) != 3 {
-		t.Fatalf("Unexpected args length\nActual: %d\nExpected: %d", len(message.Args), 3)
-	}
-	if message.Args[0] != "file1" {
-		t.Errorf("Unexpected arg[0]\nActual: %s\nExpected: %s", message.Args[0], "file1")
-	}
-	if message.Args[1] != "file2" {
-		t.Errorf("Unexpected arg[0]\nActual: %s\nExpected: %s", message.Args[1], "file2")
-	}
-	if message.Args[2] != string([]byte{0x00, 0x00, 0x00}) {
-		t.Errorf("Unexpected arg[0]\nActual: %s\nExpected: %s", message.Args[2], []byte{0x00, 0x00, 0x00})
+	if bytes.Compare(message.Data, []byte("Set")) != 0 {
+		t.Errorf("Unexpected message name:\nActual: %s\nExpected: %s", message.Data, "Set")
 	}
 
 	// Attach interactions
-	receiver, sendErr = sender.Send(&beam.Message{Verb: beam.Attach, Ret: beam.RetPipe})
+	receiver, sendErr = sender.Send(&libchan.Message{Data: []byte("Attach"), Ret: libchan.RetPipe})
 	if sendErr != nil {
-		t.Fatalf("Error sending beam message: %s", sendErr)
+		t.Fatalf("Error sending libchan message: %s", sendErr)
 	}
-	message, receiveErr = receiver.Receive(beam.Ret)
+	message, receiveErr = receiver.Receive(libchan.Ret)
 	if receiveErr != nil {
-		t.Fatalf("Error receiving beam message: %s", receiveErr)
+		t.Fatalf("Error receiving libchan message: %s", receiveErr)
 	}
-	if message.Verb != beam.Ack {
-		t.Errorf("Unexpected message name:\nActual: %s\nExpected: %s", message.Verb, beam.Ack.String())
+	if bytes.Compare(message.Data, []byte("Ack")) != 0 {
+		t.Errorf("Unexpected message name:\nActual: %s\nExpected: %s", message.Data, "Ack")
 	}
 
 	// TODO full connect interaction
-	//if message.Att == nil {
+	//if message.Fd == nil {
 	//	t.Fatalf("Missing attachment on message")
 	//}
 
 	//testBytes := []byte("Hello")
-	//n, writeErr := message.Att.Write(testBytes)
+	//n, writeErr := message.Fd.Write(testBytes)
 	//if writeErr != nil {
 	//	t.Fatalf("Error writing bytes: %s", writeErr)
 	//}
@@ -119,14 +107,14 @@ func runServer(listen string, t *testing.T, endChan chan bool) (io.Closer, error
 	go func() {
 		defer close(endChan)
 		// Ls exchange
-		message, receiveErr := session.Receive(beam.Ret)
+		message, receiveErr := session.Receive(libchan.Ret)
 		if receiveErr != nil {
 			t.Fatalf("Error receiving on server: %s", receiveErr)
 		}
-		if message.Verb != beam.Ls {
-			t.Fatalf("Unexpected verb: %s", message.Verb)
+		if bytes.Compare(message.Data, []byte("Ls")) != 0 {
+			t.Fatalf("Unexpected data: %s", message.Data)
 		}
-		receiver, sendErr := message.Ret.Send(&beam.Message{Verb: beam.Set, Args: []string{"file1", "file2", string([]byte{0x00, 0x00, 0x00})}})
+		receiver, sendErr := message.Ret.Send(&libchan.Message{Data: []byte("Set")})
 		if sendErr != nil {
 			t.Fatalf("Error sending set message: %s", sendErr)
 		}
@@ -139,14 +127,14 @@ func runServer(listen string, t *testing.T, endChan chan bool) (io.Closer, error
 		}
 
 		// Connect exchange
-		message, receiveErr = session.Receive(beam.Ret)
+		message, receiveErr = session.Receive(libchan.Ret)
 		if receiveErr != nil {
 			t.Fatalf("Error receiving on server: %s", receiveErr)
 		}
-		if message.Verb != beam.Attach {
-			t.Fatalf("Unexpected verb: %s", message.Verb)
+		if bytes.Compare(message.Data, []byte("Attach")) != 0 {
+			t.Fatalf("Unexpected data: %s", message.Data)
 		}
-		receiver, sendErr = message.Ret.Send(&beam.Message{Verb: beam.Ack})
+		receiver, sendErr = message.Ret.Send(&libchan.Message{Data: []byte("Ack")})
 		if sendErr != nil {
 			t.Fatalf("Error sending set message: %s", sendErr)
 		}
