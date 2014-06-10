@@ -1,4 +1,4 @@
-# libchan: Go channels over the network
+# libchan: like Go channels over the network
 
 Libchan is an ultra-lightweight networking library which lets network services communicate
 in the same way that goroutines communicate using channels:
@@ -9,7 +9,7 @@ in the same way that goroutines communicate using channels:
 
 Libchan supports the following transports out of the box:
 
-* In-memory go channel
+* In-memory Go channel
 * Unix socket
 * Raw TCP
 * TLS
