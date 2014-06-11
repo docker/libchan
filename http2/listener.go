@@ -76,11 +76,11 @@ func (l *ListenSession) Serve() {
 	}
 }
 
-func (l *ListenSession) Shutdown() error {
+func (l *ListenSession) Close() error {
 	return l.listener.Close()
 }
 
-func (l *ListenSession) Receive(mode int) (*libchan.Message, error) {
+func (l *ListenSession) AcceptReceiver() (libchan.Receiver, error) {
 	stream := <-l.streamChan
-	return createStreamMessage(stream, mode, l, nil)
+	return &StreamReceiver{stream: stream, streamChans: l, ret: &StreamSender{stream: stream, streamChans: l}}, nil
 }

@@ -3,7 +3,6 @@ package http2
 import (
 	"bytes"
 	"github.com/docker/libchan"
-	"io"
 	"net"
 	"testing"
 )
@@ -25,7 +24,12 @@ func TestListenSession(t *testing.T) {
 	end := make(chan bool)
 	go exerciseServer(t, listen, end)
 
-	msg, msgErr := session.Receive(libchan.Ret)
+	receiver, receiverErr := session.AcceptReceiver()
+	if receiverErr != nil {
+		t.Fatalf("Error accepting receiver: %s", receiverErr)
+	}
+
+	msg, msgErr := receiver.Receive(libchan.Ret)
 	if msgErr != nil {
 		t.Fatalf("Error receiving message: %s", msgErr)
 	}
@@ -40,16 +44,9 @@ func TestListenSession(t *testing.T) {
 	if sendErr != nil {
 		t.Fatalf("Error sending return message: %s", sendErr)
 	}
-	_, ackErr := receiver.Receive(0)
-	if ackErr == nil {
-		t.Fatalf("No error receiving from message with no return pipe")
-	}
-	if ackErr != io.EOF {
-		t.Fatalf("Unexpected error receiving from message: %s", ackErr)
-	}
 
 	<-end
-	shutdownErr := session.Shutdown()
+	shutdownErr := session.Close()
 	if shutdownErr != nil {
 		t.Fatalf("Error shutting down: %s", shutdownErr)
 	}
@@ -67,13 +64,17 @@ func exerciseServer(t *testing.T, server string, endChan chan bool) {
 	if sessionErr != nil {
 		t.Fatalf("Error creating session: %s", sessionErr)
 	}
+	sender, senderErr := session.NewSender()
+	if senderErr != nil {
+		t.Fatalf("Error creating sender: %s", senderErr)
+	}
 
-	receiver, sendErr := session.Send(&libchan.Message{Data: []byte("Attach"), Ret: libchan.RetPipe})
+	receiver, sendErr := sender.Send(&libchan.Message{Data: []byte("Attach"), Ret: libchan.RetPipe})
 	if sendErr != nil {
 		t.Fatalf("Error sending message: %s", sendErr)
 	}
 
-	msg, receiveErr := receiver.Receive(libchan.Ret)
+	msg, receiveErr := receiver.Receive(0) //libchan.Ret
 	if receiveErr != nil {
 		t.Fatalf("Error receiving message")
 	}
