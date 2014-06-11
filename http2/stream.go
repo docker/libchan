@@ -2,11 +2,12 @@ package http2
 
 import (
 	"encoding/base64"
-	"fmt"
 	"github.com/docker/libchan"
 	"github.com/docker/spdystream"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 )
 
@@ -56,34 +57,18 @@ func NewStreamSession(conn net.Conn) (*StreamSession, error) {
 	return session, nil
 }
 
-func (s *StreamSession) Send(msg *libchan.Message) (ret libchan.Receiver, err error) {
-	if msg.Fd != nil {
-		return nil, fmt.Errorf("file attachment not yet implemented for spdy transport")
-	}
-
-	var fin bool
-	if libchan.RetPipe.Equals(msg.Ret) {
-		fin = false
-	} else {
-		fin = true
-	}
-	headers := http.Header{
-		"Data": []string{base64.URLEncoding.EncodeToString(msg.Data)},
-	}
-	stream, streamErr := s.conn.CreateStream(headers, nil, fin)
+func (s *StreamSession) NewSender() (libchan.Sender, error) {
+	stream, streamErr := s.conn.CreateStream(http.Header{}, nil, false)
 	if streamErr != nil {
 		return nil, streamErr
 	}
 
-	streamChan := make(chan *spdystream.Stream)
-	s.subStreamChans[stream.String()] = streamChan
-
-	if libchan.RetPipe.Equals(msg.Ret) {
-		ret = &StreamReceiver{stream: stream, streamChans: s}
-	} else {
-		ret = &libchan.NopReceiver{}
+	// Wait for stream reply
+	waitErr := stream.Wait()
+	if waitErr != nil {
+		return nil, waitErr
 	}
-	return
+	return &StreamSender{stream: stream, streamChans: s}, nil
 }
 
 func (s *StreamSession) Close() error {
@@ -97,13 +82,46 @@ type StreamReceiver struct {
 }
 
 func (s *StreamReceiver) Receive(mode int) (*libchan.Message, error) {
-	waitErr := s.stream.Wait()
-	if waitErr != nil {
-		return nil, waitErr
+	if mode&libchan.Ret == 0 {
+		header, receiveErr := s.stream.ReceiveHeader()
+		if receiveErr != nil {
+			return nil, receiveErr
+		}
+		data, dataErr := extractDataHeader(header)
+		if dataErr != nil {
+			return nil, dataErr
+		}
+
+		return &libchan.Message{
+			Data: data,
+			Fd:   nil,
+			Ret:  s.ret,
+		}, nil
+	} else {
+		streamChan := s.streamChans.getStreamChan(s.stream)
+		stream := <-streamChan
+
+		data, dataErr := extractDataHeader(stream.Headers())
+		if dataErr != nil {
+			return nil, dataErr
+		}
+
+		var attach *os.File
+		var ret libchan.Sender
+
+		var attachErr error
+		attach, attachErr = createAttachment(stream)
+		if attachErr != nil {
+			return nil, attachErr
+		}
+		ret = &StreamSender{stream: stream, streamChans: s.streamChans}
+
+		return &libchan.Message{
+			Data: data,
+			Fd:   attach,
+			Ret:  ret,
+		}, nil
 	}
-	streamChan := s.streamChans.getStreamChan(s.stream)
-	stream := <-streamChan
-	return createStreamMessage(stream, mode, s.streamChans, s.ret)
 }
 
 type StreamSender struct {
@@ -112,32 +130,63 @@ type StreamSender struct {
 }
 
 func (s *StreamSender) Send(msg *libchan.Message) (ret libchan.Receiver, err error) {
-	if msg.Fd != nil {
-		return nil, fmt.Errorf("file attachment not yet implemented for spdy transport")
-	}
-
-	var fin bool
-	if libchan.RetPipe.Equals(msg.Ret) {
-		fin = false
-	} else {
-		fin = true
-	}
 	headers := http.Header{
 		"Data": []string{base64.URLEncoding.EncodeToString(msg.Data)},
 	}
 
-	stream, streamErr := s.stream.CreateSubStream(headers, fin)
-	if streamErr != nil {
-		return nil, streamErr
-	}
+	if msg.Fd != nil {
+		stream, streamErr := s.stream.CreateSubStream(headers, false)
+		if streamErr != nil {
+			return nil, streamErr
+		}
 
-	streamChan := make(chan *spdystream.Stream)
-	s.streamChans.addStreamChan(stream, streamChan)
+		// Wait for stream reply
+		waitErr := stream.Wait()
+		if waitErr != nil {
+			return nil, waitErr
+		}
 
-	if libchan.RetPipe.Equals(msg.Ret) {
-		ret = &StreamReceiver{stream: stream, streamChans: s.streamChans}
+		fConn, connErr := net.FileConn(msg.Fd)
+		if connErr != nil {
+			return nil, connErr
+		}
+		closeErr := msg.Fd.Close()
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		go func() {
+			io.Copy(fConn, stream)
+		}()
+		go func() {
+			io.Copy(stream, fConn)
+		}()
+		// TODO keep track of fConn, close all when sender closed
+
+		streamChan := make(chan *spdystream.Stream)
+		s.streamChans.addStreamChan(stream, streamChan)
+		ret = &StreamReceiver{stream: stream, streamChans: s.streamChans, ret: &StreamSender{stream: stream, streamChans: s.streamChans}}
+	} else if libchan.RetPipe.Equals(msg.Ret) {
+		stream, streamErr := s.stream.CreateSubStream(headers, false)
+		if streamErr != nil {
+			return nil, streamErr
+		}
+
+		// Wait for stream reply
+		waitErr := stream.Wait()
+		if waitErr != nil {
+			return nil, waitErr
+		}
+
+		streamChan := make(chan *spdystream.Stream)
+		s.streamChans.addStreamChan(stream, streamChan)
+		ret = &StreamReceiver{stream: stream, streamChans: s.streamChans, ret: &StreamSender{stream: stream, streamChans: s.streamChans}}
 	} else {
-		ret = libchan.NopReceiver{}
+		sendErr := s.stream.SendHeader(headers, false)
+		if sendErr != nil {
+			return nil, sendErr
+		}
+		//ret = &libchan.NopReceiver{}
+		ret = &StreamReceiver{stream: s.stream, streamChans: s.streamChans, ret: &StreamSender{stream: s.stream, streamChans: s.streamChans}}
 	}
 
 	return
