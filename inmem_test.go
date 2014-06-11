@@ -2,10 +2,11 @@ package libchan
 
 import (
 	"fmt"
-	"github.com/dotcloud/docker/pkg/testutils"
 	"io/ioutil"
 	"os"
 	"testing"
+
+	"github.com/dotcloud/docker/pkg/testutils"
 )
 
 func TestInmemRetPipe(t *testing.T) {
@@ -103,7 +104,7 @@ func TestSendFile(t *testing.T) {
 	r, w := Pipe()
 	defer r.Close()
 	defer w.Close()
-	tmp, err := ioutil.TempFile("", "beam-test-")
+	tmp, err := ioutil.TempFile("", "libchan-test-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,8 +1,9 @@
 package unix
 
 import (
-	"github.com/dotcloud/docker/pkg/beam/data"
 	"testing"
+
+	"github.com/docker/libchan/data"
 )
 
 func TestSendConn(t *testing.T) {

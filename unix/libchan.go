@@ -59,14 +59,14 @@ func sendPipe(dst Sender, data []byte, mode int) (*os.File, error) {
 
 }
 
-// SendRPipe create a pipe and sends its *read* end attached in a beam message
+// SendRPipe create a pipe and sends its *read* end attached in a libchan message
 // to `dst`, with `data` as the message payload.
 // It returns the *write* end of the pipe, or an error.
 func SendRPipe(dst Sender, data []byte) (*os.File, error) {
 	return sendPipe(dst, data, R)
 }
 
-// SendWPipe create a pipe and sends its *read* end attached in a beam message
+// SendWPipe create a pipe and sends its *read* end attached in a libchan message
 // to `dst`, with `data` as the message payload.
 // It returns the *write* end of the pipe, or an error.
 func SendWPipe(dst Sender, data []byte) (*os.File, error) {
@@ -107,7 +107,7 @@ func ReceiveConn(src Receiver) ([]byte, *UnixConn, error) {
 		}
 		conn, err := FileConn(f)
 		if err != nil {
-			// Skip beam attachments which are not connections
+			// Skip libchan attachments which are not connections
 			// (for example might be a regular file, directory etc)
 			continue
 		}
@@ -138,7 +138,7 @@ func Copy(dst Sender, src Receiver) (int, error) {
 	return n, nil
 }
 
-// MsgDesc returns a human readable description of a beam message, usually
+// MsgDesc returns a human readable description of a libchan message, usually
 // for debugging purposes.
 func MsgDesc(payload []byte, attachment *os.File) string {
 	var filedesc string = "<nil>"

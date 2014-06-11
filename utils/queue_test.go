@@ -1,26 +1,27 @@
 package utils
 
 import (
-	"github.com/docker/libswarm/beam"
 	"testing"
+
+	"github.com/docker/libchan"
 )
 
 func TestSendRet(t *testing.T) {
-	r, w := beam.Pipe()
+	r, w := libchan.Pipe()
 	defer r.Close()
 	defer w.Close()
 	q := NewQueue(w, 1)
 	defer q.Close()
-	ret, err := q.Send(&beam.Message{Verb: beam.Log, Args: []string{"ping"}, Ret: beam.RetPipe})
+	ret, err := q.Send(&libchan.Message{Data: []byte("Log"), Ret: libchan.RetPipe})
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() {
-		ping, err := r.Receive(beam.Ret)
+		ping, err := r.Receive(libchan.Ret)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ping.Ret.Send(&beam.Message{Verb: beam.Log, Args: []string{"pong"}}); err != nil {
+		if _, err := ping.Ret.Send(&libchan.Message{Data: []byte("Log")}); err != nil {
 			t.Fatal(err)
 		}
 	}()
@@ -28,16 +29,16 @@ func TestSendRet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pong.Verb != beam.Log {
+	if string(pong.Data) != "Log" {
 		t.Fatal(err)
 	}
 }
 
 func TestSendClose(t *testing.T) {
-	q := NewQueue(beam.NopSender{}, 1)
-	q.Send(&beam.Message{Verb: beam.Error, Args: []string{"hello"}})
+	q := NewQueue(libchan.NopSender{}, 1)
+	q.Send(&libchan.Message{Data: []byte("Error")})
 	q.Close()
-	if _, err := q.Send(&beam.Message{Verb: beam.Ack, Args: []string{"again"}}); err == nil {
+	if _, err := q.Send(&libchan.Message{Data: []byte("Ack")}); err == nil {
 		t.Fatal("send on closed queue should return an error")
 	}
 }
