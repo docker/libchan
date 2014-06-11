@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+// ListenSession is a session manager which accepts new
+// connections and spawns spdy connection managers.
 type ListenSession struct {
 	listener       net.Listener
 	streamChan     chan *spdystream.Stream
@@ -15,6 +17,11 @@ type ListenSession struct {
 	auth           Authenticator
 }
 
+// NewListenSession creates a new listen session using
+// a network listeners and function to authenticate
+// new connections.  ListenSession expects tls session
+// handling to occur by the authenticator or the listener,
+// ListenSession will not perform tls handshakes.
 func NewListenSession(listener net.Listener, auth Authenticator) (*ListenSession, error) {
 	return &ListenSession{
 		listener:       listener,
@@ -48,6 +55,9 @@ func (l *ListenSession) getStreamChan(stream *spdystream.Stream) chan *spdystrea
 	return l.streamChan
 }
 
+// Serve runs the listen accept loop, spawning connection manager
+// for each accepted connection. This function will block until
+// the listener is closed or an error occurs on accept.
 func (l *ListenSession) Serve() {
 	for {
 		conn, err := l.listener.Accept()
@@ -76,10 +86,13 @@ func (l *ListenSession) Serve() {
 	}
 }
 
+// Close closes the underlying listener
 func (l *ListenSession) Close() error {
 	return l.listener.Close()
 }
 
+// AcceptReceiver waits for a stream to be created in
+// the session and returns a receiver for that stream.
 func (l *ListenSession) AcceptReceiver() (libchan.Receiver, error) {
 	stream := <-l.streamChan
 	return &StreamReceiver{stream: stream, streamChans: l, ret: &StreamSender{stream: stream, streamChans: l}}, nil
