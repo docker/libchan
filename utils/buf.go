@@ -1,14 +1,14 @@
 package utils
 
 import (
-	"github.com/docker/libswarm/beam"
+	"github.com/docker/libchan"
 )
 
-type Buffer []*beam.Message
+type Buffer []*libchan.Message
 
-func (buf *Buffer) Send(msg *beam.Message) (libchan.Receiver, error) {
+func (buf *Buffer) Send(msg *libchan.Message) (libchan.Receiver, error) {
 	(*buf) = append(*buf, msg)
-	return beam.NopReceiver{}, nil
+	return libchan.NopReceiver{}, nil
 }
 
 func (buf *Buffer) Close() error {

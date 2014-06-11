@@ -1,26 +1,26 @@
 package utils
 
 import (
-	"github.com/docker/libswarm/beam"
+	"github.com/docker/libchan"
 )
 
 type Queue struct {
-	*beam.PipeSender
-	dst beam.Sender
-	ch  chan *beam.Message
+	*libchan.PipeSender
+	dst libchan.Sender
+	ch  chan *libchan.Message
 }
 
-func NewQueue(dst beam.Sender, size int) *Queue {
-	r, w := beam.Pipe()
+func NewQueue(dst libchan.Sender, size int) *Queue {
+	r, w := libchan.Pipe()
 	q := &Queue{
 		PipeSender: w,
 		dst:        dst,
-		ch:         make(chan *beam.Message, size),
+		ch:         make(chan *libchan.Message, size),
 	}
 	go func() {
 		defer close(q.ch)
 		for {
-			msg, err := r.Receive(beam.Ret)
+			msg, err := r.Receive(libchan.Ret)
 			if err != nil {
 				r.Close()
 				return

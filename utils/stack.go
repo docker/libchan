@@ -3,12 +3,12 @@ package utils
 import (
 	"container/list"
 	"fmt"
-	"github.com/docker/libswarm/beam"
+	"github.com/docker/libchan"
 	"strings"
 	"sync"
 )
 
-// StackSender forwards beam messages to a dynamic list of backend receivers.
+// StackSender forwards libchan messages to a dynamic list of backend receivers.
 // New backends are stacked on top. When a message is sent, each backend is
 // tried until one succeeds. Any failing backends encountered along the way
 // are removed from the queue.
@@ -24,8 +24,8 @@ func NewStackSender() *StackSender {
 	}
 }
 
-func (s *StackSender) Send(msg *beam.Message) (ret beam.Receiver, err error) {
-	completed := s.walk(func(h beam.Sender) (ok bool) {
+func (s *StackSender) Send(msg *libchan.Message) (ret libchan.Receiver, err error) {
+	completed := s.walk(func(h libchan.Sender) (ok bool) {
 		ret, err = h.Send(msg)
 		fmt.Printf("[stacksender] sending %v to %#v returned %v\n", msg, h, err)
 		if err == nil {
@@ -38,10 +38,10 @@ func (s *StackSender) Send(msg *beam.Message) (ret beam.Receiver, err error) {
 		return ret, err
 	}
 	// Silently drop messages if no valid backend is available.
-	return beam.NopSender{}.Send(msg)
+	return libchan.NopSender{}.Send(msg)
 }
 
-func (s *StackSender) Add(dst beam.Sender) *StackSender {
+func (s *StackSender) Add(dst libchan.Sender) *StackSender {
 	s.l.Lock()
 	defer s.l.Unlock()
 	prev := &StackSender{
@@ -54,7 +54,7 @@ func (s *StackSender) Add(dst beam.Sender) *StackSender {
 }
 
 func (s *StackSender) Close() error {
-	s.walk(func(h beam.Sender) bool {
+	s.walk(func(h libchan.Sender) bool {
 		h.Close()
 		// remove all handlers
 		return false
@@ -68,7 +68,7 @@ func (s *StackSender) _walk(f func(*list.Element) bool) bool {
 	e = s.stack.Front()
 	s.l.RUnlock()
 	for e != nil {
-		fmt.Printf("[StackSender.Walk] %v\n", e.Value.(beam.Sender))
+		fmt.Printf("[StackSender.Walk] %v\n", e.Value.(libchan.Sender))
 		s.l.RLock()
 		next := e.Next()
 		s.l.RUnlock()
@@ -81,9 +81,9 @@ func (s *StackSender) _walk(f func(*list.Element) bool) bool {
 	return true
 }
 
-func (s *StackSender) walk(f func(beam.Sender) bool) bool {
+func (s *StackSender) walk(f func(libchan.Sender) bool) bool {
 	return s._walk(func(e *list.Element) bool {
-		ok := f(e.Value.(beam.Sender))
+		ok := f(e.Value.(libchan.Sender))
 		if ok {
 			// Found a valid handler. Stop walking.
 			return false
@@ -105,7 +105,7 @@ func (s *StackSender) Len() int {
 func (s *StackSender) String() string {
 	var parts []string
 	s._walk(func(e *list.Element) bool {
-		parts = append(parts, fmt.Sprintf("%v", e.Value.(beam.Sender)))
+		parts = append(parts, fmt.Sprintf("%v", e.Value.(libchan.Sender)))
 		return true
 	})
 	return fmt.Sprintf("%d:[%s]", len(parts), strings.Join(parts, "->"))
