@@ -34,5 +34,4 @@ func Copy(dst Sender, src Receiver) (int, error) {
 		}
 		n++
 	}
-	return n, nil
 }
