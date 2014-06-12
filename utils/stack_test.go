@@ -116,7 +116,7 @@ func TestStackAddBad(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.Len() != 1 {
-		t.Fatalf("%#v")
+		t.Fatalf("%#v", s)
 	}
 	if len(buf) != 1 {
 		t.Fatalf("%#v", buf)
