@@ -15,8 +15,8 @@ type Receiver interface {
 }
 
 type Message struct {
-	Data	[]byte
-	Fd	*os.File
+	Data []byte
+	Fd   *os.File
 	Ret  Sender
 }
 
