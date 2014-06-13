@@ -1,0 +1,11 @@
+language: go
+
+install:
+    - go get -d ./...
+    - go get code.google.com/p/go.tools/cmd/goimports
+    - go get code.google.com/p/go.tools/cmd/vet
+
+script:
+    - go test ./...
+    - FMT="$($HOME/gopath/bin/goimports -d .)" && echo "$FMT" && test -z "$FMT"
+    - go vet ./...
