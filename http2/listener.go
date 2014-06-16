@@ -4,6 +4,7 @@ import (
 	"github.com/docker/libchan"
 	"github.com/docker/spdystream"
 	"net"
+	"net/http"
 	"sync"
 )
 
@@ -32,6 +33,8 @@ func NewListenSession(listener net.Listener, auth Authenticator) (*ListenSession
 }
 
 func (l *ListenSession) streamHandler(stream *spdystream.Stream) {
+	// TODO authorize stream
+	stream.SendReply(http.Header{}, false)
 	streamChan := l.getStreamChan(stream.Parent())
 	streamChan <- stream
 }
@@ -67,7 +70,7 @@ func (l *ListenSession) Serve() {
 		}
 
 		go func() {
-			authHandler, authErr := l.auth(conn)
+			authErr := l.auth(conn)
 			if authErr != nil {
 				// TODO log
 				conn.Close()
@@ -81,7 +84,7 @@ func (l *ListenSession) Serve() {
 				return
 			}
 
-			go spdyConn.Serve(l.streamHandler, authHandler)
+			go spdyConn.Serve(l.streamHandler)
 		}()
 	}
 }

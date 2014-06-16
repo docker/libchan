@@ -74,7 +74,7 @@ func exerciseServer(t *testing.T, server string, endChan chan bool) {
 		t.Fatalf("Error sending message: %s", sendErr)
 	}
 
-	msg, receiveErr := receiver.Receive(0) //libchan.Ret
+	msg, receiveErr := receiver.Receive(0)
 	if receiveErr != nil {
 		t.Fatalf("Error receiving message")
 	}
