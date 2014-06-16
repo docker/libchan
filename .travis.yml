@@ -1,13 +1,11 @@
 language: go
 
-go: 1.2
-
 install:
-    - go get ./...
+    - go get -dt ./...
     - go get code.google.com/p/go.tools/cmd/goimports
     - go get code.google.com/p/go.tools/cmd/vet
 
 script:
     - go test ./...
-    - test -z "$($HOME/gopath/bin/goimports -d . | tee /dev/tty)"
+    - FMT="$($HOME/gopath/bin/goimports -d .)" && echo "$FMT" && test -z "$FMT"
     - go vet ./...
