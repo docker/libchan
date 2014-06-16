@@ -1,9 +1,10 @@
 package unix
 
 import (
+	"testing"
+
 	lch "github.com/docker/libchan"
 	"github.com/dotcloud/docker/pkg/testutils"
-	"testing"
 )
 
 func TestPair(t *testing.T) {

@@ -2,9 +2,10 @@ package http2
 
 import (
 	"bytes"
-	"github.com/docker/libchan"
 	"net"
 	"testing"
+
+	"github.com/docker/libchan"
 )
 
 func TestListenSession(t *testing.T) {
