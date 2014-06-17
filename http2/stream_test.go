@@ -103,17 +103,20 @@ func runServer(listen string, t *testing.T, endChan chan bool) (io.Closer, error
 		return nil, lErr
 	}
 
-	session, sessionErr := NewListenSession(listener, NoAuthenticator)
-	if sessionErr != nil {
-		t.Fatalf("Error creating session: %s", sessionErr)
+	listenSession, listenSessionErr := NewListenSession(listener, NoAuthenticator)
+	if listenSessionErr != nil {
+		t.Fatalf("Error creating session listener: %s", listenSessionErr)
 	}
-
-	go session.Serve()
 
 	go func() {
 		defer close(endChan)
 
-		receiver, receiverErr := session.AcceptReceiver()
+		session, sessionErr := listenSession.AcceptSession()
+		if sessionErr != nil {
+			t.Fatalf("Error accepting session: %s", sessionErr)
+		}
+
+		receiver, receiverErr := session.ReceiverWait()
 		if receiverErr != nil {
 			t.Fatalf("Error accepting receiver: %s", receiverErr)
 		}
