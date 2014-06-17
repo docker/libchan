@@ -37,6 +37,7 @@ func (s *StreamSession) getStreamChan(stream *spdystream.Stream) chan *spdystrea
 }
 
 func (s *StreamSession) newStreamHandler(stream *spdystream.Stream) {
+	stream.SendReply(http.Header{}, false)
 	streamChan := s.getStreamChan(stream.Parent())
 	streamChan <- stream
 }
@@ -54,7 +55,7 @@ func NewStreamSession(conn net.Conn) (*StreamSession, error) {
 	if spdyErr != nil {
 		return nil, spdyErr
 	}
-	go spdyConn.Serve(session.newStreamHandler, spdystream.NoAuthHandler)
+	go spdyConn.Serve(session.newStreamHandler)
 
 	session.conn = spdyConn
 
