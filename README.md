@@ -24,6 +24,11 @@ high-performance IPC; then to a cluster of machines communicating over
 authenticated TLS sessions. All along it benefits from the concurrency model
 which has made Go so popular.
 
+Not all transports have the same semantics. In-memory Go channels guarantee
+exactly-once delivery; TCP, TLS, and the various HTTP socket families do not
+guarantee delivery. Messages arrive in order but may be arbitrarily delayed or
+lost. There are no ordering invariants across channels.
+
 An explicit goal of libchan is simplicity of implementation and clarity of
 spec. Porting it to any language should be as effortless as humanly possible.
 
