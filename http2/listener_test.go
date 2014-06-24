@@ -14,17 +14,19 @@ func TestListenSession(t *testing.T) {
 		t.Fatalf("Error creating listener: %s", listenErr)
 	}
 
-	session, sessionErr := NewListenSession(listener, NoAuthenticator)
-	if sessionErr != nil {
-		t.Fatalf("Error creating session: %s", sessionErr)
+	listenSession, listenSessionErr := NewListenSession(listener, NoAuthenticator)
+	if listenSessionErr != nil {
+		t.Fatalf("Error creating session: %s", listenSessionErr)
 	}
-
-	go session.Serve()
 
 	end := make(chan bool)
 	go exerciseServer(t, listen, end)
 
-	receiver, receiverErr := session.AcceptReceiver()
+	session, sessionErr := listenSession.AcceptSession()
+	if sessionErr != nil {
+		t.Fatalf("Error accepting session: %s", sessionErr)
+	}
+	receiver, receiverErr := session.ReceiverWait()
 	if receiverErr != nil {
 		t.Fatalf("Error accepting receiver: %s", receiverErr)
 	}

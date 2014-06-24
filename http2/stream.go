@@ -16,24 +16,31 @@ import (
 type StreamSession struct {
 	conn *spdystream.Connection
 
-	streamLock     sync.Mutex
+	streamCond     *sync.Cond
 	streamChan     chan *spdystream.Stream
 	subStreamChans map[string]chan *spdystream.Stream
 }
 
 func (s *StreamSession) addStreamChan(stream *spdystream.Stream, streamChan chan *spdystream.Stream) {
+	s.streamCond.L.Lock()
+	defer s.streamCond.L.Unlock()
 	s.subStreamChans[stream.String()] = streamChan
+	s.streamCond.Broadcast()
 }
 
 func (s *StreamSession) getStreamChan(stream *spdystream.Stream) chan *spdystream.Stream {
 	if stream == nil {
 		return s.streamChan
 	}
+	s.streamCond.L.Lock()
+	defer s.streamCond.L.Unlock()
 	streamChan, ok := s.subStreamChans[stream.String()]
-	if ok {
-		return streamChan
+	for !ok {
+		// TODO Test for stream being closed
+		s.streamCond.Wait()
+		streamChan, ok = s.subStreamChans[stream.String()]
 	}
-	return s.streamChan
+	return streamChan
 }
 
 func (s *StreamSession) newStreamHandler(stream *spdystream.Stream) {
@@ -44,14 +51,21 @@ func (s *StreamSession) newStreamHandler(stream *spdystream.Stream) {
 
 // NewStreamSession creates a new stream session from the
 // provided network connection.  The network connection is
-// expected to already provide a tls session.
+// expected to already provide a tls session.  NewStreamSession
+// should only be called on client connections, server connections
+// should be created through ListenSession.
 func NewStreamSession(conn net.Conn) (*StreamSession, error) {
+	return newStreamSession(conn, false)
+}
+
+func newStreamSession(conn net.Conn, server bool) (*StreamSession, error) {
 	session := &StreamSession{
 		streamChan:     make(chan *spdystream.Stream),
 		subStreamChans: make(map[string]chan *spdystream.Stream),
+		streamCond:     sync.NewCond(new(sync.Mutex)),
 	}
 
-	spdyConn, spdyErr := spdystream.NewConnection(conn, false)
+	spdyConn, spdyErr := spdystream.NewConnection(conn, server)
 	if spdyErr != nil {
 		return nil, spdyErr
 	}
@@ -76,7 +90,19 @@ func (s *StreamSession) NewSender() (libchan.Sender, error) {
 	if waitErr != nil {
 		return nil, waitErr
 	}
+
+	streamChan := make(chan *spdystream.Stream)
+	s.addStreamChan(stream, streamChan)
 	return &StreamSender{stream: stream, streamChans: s}, nil
+}
+
+// ReceiverWaits waits a new stream to be created and returns a
+// receiver with that stream.
+func (s *StreamSession) ReceiverWait() (libchan.Receiver, error) {
+	stream := <-s.streamChan
+	streamChan := make(chan *spdystream.Stream)
+	s.addStreamChan(stream, streamChan)
+	return &StreamReceiver{stream: stream, streamChans: s, ret: &StreamSender{stream: stream, streamChans: s}}, nil
 }
 
 // Close closes the underlying network connection, causing
@@ -115,6 +141,7 @@ func (s *StreamReceiver) Receive(mode int) (*libchan.Message, error) {
 	} else {
 		streamChan := s.streamChans.getStreamChan(s.stream)
 		stream := <-streamChan
+		s.streamChans.addStreamChan(stream, make(chan *spdystream.Stream))
 
 		data, dataErr := extractDataHeader(stream.Headers())
 		if dataErr != nil {
