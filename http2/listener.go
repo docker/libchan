@@ -1,8 +1,6 @@
 package http2
 
-import (
-	"net"
-)
+import "net"
 
 // ListenSession is a session manager which accepts new
 // connections and spawns spdy connection managers.

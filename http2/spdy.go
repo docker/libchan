@@ -8,12 +8,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/docker/spdystream"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"syscall"
+
+	"github.com/docker/spdystream"
 )
 
 // Authenticator is a function to provide authentication to

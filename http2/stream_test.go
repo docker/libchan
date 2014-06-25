@@ -2,13 +2,15 @@ package http2
 
 import (
 	"bytes"
+
 	"github.com/docker/libchan"
 	//"github.com/docker/spdystream"
-	"github.com/docker/libchan/unix"
 	"io"
 	"net"
 	"os"
 	"testing"
+
+	"github.com/docker/libchan/unix"
 )
 
 func TestBeamSession(t *testing.T) {

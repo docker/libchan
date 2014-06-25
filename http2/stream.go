@@ -2,13 +2,14 @@ package http2
 
 import (
 	"encoding/base64"
-	"github.com/docker/libchan"
-	"github.com/docker/spdystream"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"sync"
+
+	"github.com/docker/libchan"
+	"github.com/docker/spdystream"
 )
 
 // StreamSession is a session manager on top of a network
