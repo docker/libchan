@@ -1,4 +1,4 @@
-This package defines a remote transport for Beam services using http2/spdy and tls.
+This package defines a remote transport for libchan services using http2/spdy and tls.
 
 Uses https://github.com/docker/spdystream
 
