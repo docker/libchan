@@ -2,7 +2,7 @@ package libchan
 
 import (
 	"errors"
-	"os"
+	"io"
 )
 
 type Sender interface {
@@ -15,9 +15,9 @@ type Receiver interface {
 }
 
 type Message struct {
-	Data []byte
-	Fd   *os.File
-	Ret  Sender
+	Data   []byte
+	Stream io.ReadWriteCloser
+	Ret    Sender
 }
 
 const (

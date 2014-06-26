@@ -50,8 +50,8 @@ func (c *Conn) Close() error {
 }
 
 func (c *Conn) Send(msg *lch.Message) (lch.Receiver, error) {
-	if msg.Fd != nil {
-		return nil, fmt.Errorf("file attachment not yet implemented in unix transport")
+	if msg.Stream != nil {
+		return nil, fmt.Errorf("stream attachment not yet implemented in unix transport")
 	}
 	// Setup nested streams
 	var (

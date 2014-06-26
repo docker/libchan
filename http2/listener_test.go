@@ -2,10 +2,9 @@ package http2
 
 import (
 	"bytes"
+	"github.com/docker/libchan"
 	"net"
 	"testing"
-
-	"github.com/docker/libchan"
 )
 
 func TestListenSession(t *testing.T) {
@@ -36,7 +35,7 @@ func TestListenSession(t *testing.T) {
 	if msgErr != nil {
 		t.Fatalf("Error receiving message: %s", msgErr)
 	}
-	if msg.Fd == nil {
+	if msg.Stream == nil {
 		t.Fatalf("Error message missing attachment")
 	}
 	if bytes.Compare(msg.Data, []byte("Attach")) != 0 {

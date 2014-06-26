@@ -2,14 +2,12 @@ package http2
 
 import (
 	"bytes"
-
-	"github.com/docker/libchan"
-	//"github.com/docker/spdystream"
 	"io"
 	"net"
 	"os"
 	"testing"
 
+	"github.com/docker/libchan"
 	"github.com/docker/libchan/unix"
 )
 
@@ -61,12 +59,12 @@ func TestLibchanSession(t *testing.T) {
 		t.Errorf("Unexpected message name:\nActual: %s\nExpected: %s", message.Data, "Ack")
 	}
 
-	if message.Fd == nil {
+	if message.Stream == nil {
 		t.Fatalf("Missing attachment on message")
 	}
 
 	testBytes := []byte("Hello")
-	n, writeErr := message.Fd.Write(testBytes)
+	n, writeErr := message.Stream.Write(testBytes)
 	if writeErr != nil {
 		t.Fatalf("Error writing bytes: %s", writeErr)
 	}
@@ -76,7 +74,7 @@ func TestLibchanSession(t *testing.T) {
 
 	testBytes2 := []byte("from server")
 	buf := make([]byte, 15)
-	n, readErr := message.Fd.Read(buf)
+	n, readErr := message.Stream.Read(buf)
 	if readErr != nil {
 		t.Fatalf("Error writing bytes: %s", readErr)
 	}
@@ -150,8 +148,10 @@ func runServer(listen string, t *testing.T, endChan chan bool) (io.Closer, error
 		if attErr != nil {
 			t.Fatalf("Error creating attachment: %s", attErr)
 		}
+		defer att.Close()
+		defer conn.Close()
 
-		_, sendErr = message.Ret.Send(&libchan.Message{Data: []byte("Ack"), Fd: att})
+		_, sendErr = message.Ret.Send(&libchan.Message{Data: []byte("Ack"), Stream: att})
 		if sendErr != nil {
 			t.Fatalf("Error sending set message: %s", sendErr)
 		}
@@ -160,7 +160,7 @@ func runServer(listen string, t *testing.T, endChan chan bool) (io.Closer, error
 		buf := make([]byte, 10)
 		n, readErr := conn.Read(buf)
 		if readErr != nil {
-			t.Fatalf("Error writing bytes: %s", readErr)
+			t.Fatalf("Error reading bytes: %s", readErr)
 		}
 		if n != 5 {
 			t.Fatalf("Unexpected number of bytes read:\nActual: %d\nExpected: 5", n)

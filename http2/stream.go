@@ -2,14 +2,12 @@ package http2
 
 import (
 	"encoding/base64"
+	"github.com/docker/libchan"
+	"github.com/docker/spdystream"
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"sync"
-
-	"github.com/docker/libchan"
-	"github.com/docker/spdystream"
 )
 
 // StreamSession is a session manager on top of a network
@@ -135,9 +133,9 @@ func (s *StreamReceiver) Receive(mode int) (*libchan.Message, error) {
 		}
 
 		return &libchan.Message{
-			Data: data,
-			Fd:   nil,
-			Ret:  s.ret,
+			Data:   data,
+			Stream: nil,
+			Ret:    s.ret,
 		}, nil
 	} else {
 		streamChan := s.streamChans.getStreamChan(s.stream)
@@ -149,20 +147,14 @@ func (s *StreamReceiver) Receive(mode int) (*libchan.Message, error) {
 			return nil, dataErr
 		}
 
-		var attach *os.File
 		var ret libchan.Sender
 
-		var attachErr error
-		attach, attachErr = createAttachment(stream)
-		if attachErr != nil {
-			return nil, attachErr
-		}
 		ret = &StreamSender{stream: stream, streamChans: s.streamChans}
 
 		return &libchan.Message{
-			Data: data,
-			Fd:   attach,
-			Ret:  ret,
+			Data:   data,
+			Stream: stream,
+			Ret:    ret,
 		}, nil
 	}
 }
@@ -182,7 +174,7 @@ func (s *StreamSender) Send(msg *libchan.Message) (ret libchan.Receiver, err err
 		"Data": []string{base64.URLEncoding.EncodeToString(msg.Data)},
 	}
 
-	if msg.Fd != nil {
+	if msg.Stream != nil {
 		stream, streamErr := s.stream.CreateSubStream(headers, false)
 		if streamErr != nil {
 			return nil, streamErr
@@ -194,21 +186,12 @@ func (s *StreamSender) Send(msg *libchan.Message) (ret libchan.Receiver, err err
 			return nil, waitErr
 		}
 
-		fConn, connErr := net.FileConn(msg.Fd)
-		if connErr != nil {
-			return nil, connErr
-		}
-		closeErr := msg.Fd.Close()
-		if closeErr != nil {
-			return nil, closeErr
-		}
 		go func() {
-			io.Copy(fConn, stream)
+			io.Copy(msg.Stream, stream)
 		}()
 		go func() {
-			io.Copy(stream, fConn)
+			io.Copy(stream, msg.Stream)
 		}()
-		// TODO keep track of fConn, close all when sender closed
 
 		streamChan := make(chan *spdystream.Stream)
 		s.streamChans.addStreamChan(stream, streamChan)

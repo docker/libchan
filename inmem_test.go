@@ -114,7 +114,7 @@ func TestSendFile(t *testing.T) {
 	tmp.Seek(0, 0)
 	testutils.Timeout(t, func() {
 		go func() {
-			_, err := w.Send(&Message{Data: []byte("path=" + tmp.Name()), Fd: tmp})
+			_, err := w.Send(&Message{Data: []byte("path=" + tmp.Name()), Stream: tmp})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +126,7 @@ func TestSendFile(t *testing.T) {
 		if string(msg.Data) != "path="+tmp.Name() {
 			t.Fatalf("%#v", msg)
 		}
-		txt, err := ioutil.ReadAll(msg.Fd)
+		txt, err := ioutil.ReadAll(msg.Stream)
 		if err != nil {
 			t.Fatal(err)
 		}
