@@ -72,7 +72,7 @@ transport just passes os.File pointers around. The unix socket transport
 uses fd passing which makes it suitable for high-performance IPC. The
 tcp transport uses dedicated http2 streams. And as a bonus extension, a
 built-in  tcp gateway can be used to proxy raw network sockets without
-extra overhead. That means Beam services can be used as smart gateways to a
+extra overhead. That means libchan services can be used as smart gateways to a
 sql database, ssh or file transfer service, with unified auth, discovery
 and tooling and without performance penalty.
 
