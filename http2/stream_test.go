@@ -13,7 +13,7 @@ import (
 	"github.com/docker/libchan/unix"
 )
 
-func TestBeamSession(t *testing.T) {
+func TestLibchanSession(t *testing.T) {
 	end := make(chan bool)
 	listen := "localhost:7543"
 	server, serverErr := runServer(listen, t, end)
