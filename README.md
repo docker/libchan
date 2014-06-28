@@ -118,6 +118,11 @@ for {
 - <http://twitter.com/solomonstre>
 - <http://github.com/shykes>
 
+## Additional Implementations
+
+### Java
+- https://github.com/ndeloof/jchan
+
 ## Copyright and license
 
 Code and documentation copyright 2013-2014 Docker, inc. Code released under the Apache 2.0 license.
