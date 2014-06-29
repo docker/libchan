@@ -31,10 +31,6 @@ The Receiver can receive messages. Messages arrive in the same order they were s
 A channel is uni-directional: messages can only flow in one direction. So channels are more similar to pipes
 than to sockets.
 
-### Session
-
-A session is a reliable 2-way byte stream which is used 
-
 ### Message
 
 A message is a discrete packet of data which can be sent on a channel. Messages are structured into multiple
@@ -114,9 +110,6 @@ the frame.
 * When receiving a data frame on any active SPDY stream, the receiver MUST decode it using msgpack. If
 the decoding fails, the receiver MUST close the underlying stream, and future calls to `Receive` on that
 channel MUST return an error.
-
-* If a valid msgpack message is included in the data frame, but the frame also includes garbage trailing or
-leading data, the frame should be handled just like an invalid encoding error.
 
 * A valid msgpack decode operation with leftover trailing or leading data is considered an *invalid* msgpack
 decode operation, and MUST yield the corresponding error.
