@@ -59,6 +59,13 @@ func NewStreamSession(conn net.Conn) (*StreamSession, error) {
 	return newStreamSession(conn, false)
 }
 
+// NewServerStreamSession creates a new stream server session from
+// the provided network connection. This should only be called from
+// server sessions that have their own listeners.
+func NewServerStreamSession(conn net.Conn) (*StreamSession, error) {
+	return newStreamSession(conn, true)
+}
+
 func newStreamSession(conn net.Conn, server bool) (*StreamSession, error) {
 	session := &StreamSession{
 		streamChan:     make(chan *spdystream.Stream),
