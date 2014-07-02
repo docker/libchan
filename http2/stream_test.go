@@ -34,7 +34,12 @@ func TestLibchanSession(t *testing.T) {
 	}
 
 	// Ls interaction
-	receiver, sendErr := sender.Send(&libchan.Message{Data: []byte("Ls")})
+	m := &libchan.Message{}
+	encodeErr := m.Encode(&Command{"Ls"})
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	receiver, sendErr := sender.Send(m)
 	if sendErr != nil {
 		t.Fatalf("Error sending libchan message: %s", sendErr)
 	}
@@ -42,12 +47,22 @@ func TestLibchanSession(t *testing.T) {
 	if receiveErr != nil {
 		t.Fatalf("Error receiving libchan message: %s", receiveErr)
 	}
-	if bytes.Compare(message.Data, []byte("Set")) != 0 {
-		t.Errorf("Unexpected message name:\nActual: %s\nExpected: %s", message.Data, "Set")
+	var command Command
+	decodeErr := message.Decode(&command)
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if command.Verb != "Set" {
+		t.Errorf("Unexpected command verb:\nActual: %s\nExpected: %s", command.Verb, "Set")
 	}
 
 	// Attach interactions
-	receiver, sendErr = sender.Send(&libchan.Message{Data: []byte("Attach")}) //, Ret: libchan.RetPipe
+	m = &libchan.Message{}
+	encodeErr = m.Encode(&Command{"Attach"})
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	receiver, sendErr = sender.Send(m) //, Ret: libchan.RetPipe
 	if sendErr != nil {
 		t.Fatalf("Error sending libchan message: %s", sendErr)
 	}
@@ -55,8 +70,13 @@ func TestLibchanSession(t *testing.T) {
 	if receiveErr != nil {
 		t.Fatalf("Error receiving libchan message: %s", receiveErr)
 	}
-	if bytes.Compare(message.Data, []byte("Ack")) != 0 {
-		t.Errorf("Unexpected message name:\nActual: %s\nExpected: %s", message.Data, "Ack")
+	command = Command{}
+	decodeErr = message.Decode(&command)
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if command.Verb != "Ack" {
+		t.Errorf("Unexpected command verb:\nActual: %s\nExpected: %s", command.Verb, "Ack")
 	}
 
 	if message.Stream == nil {
@@ -126,10 +146,22 @@ func runServer(listen string, t *testing.T, endChan chan bool) (io.Closer, error
 		if receiveErr != nil {
 			t.Fatalf("Error receiving on server: %s", receiveErr)
 		}
-		if bytes.Compare(message.Data, []byte("Ls")) != 0 {
-			t.Fatalf("Unexpected data: %s", message.Data)
+
+		var command Command
+		decodeErr := message.Decode(&command)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
 		}
-		_, sendErr := message.Ret.Send(&libchan.Message{Data: []byte("Set")})
+		if command.Verb != "Ls" {
+			t.Fatalf("Unexpected command: %s", command.Verb)
+		}
+
+		m := &libchan.Message{}
+		encodeErr := m.Encode(&Command{"Set"})
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		_, sendErr := message.Ret.Send(m)
 		if sendErr != nil {
 			t.Fatalf("Error sending set message: %s", sendErr)
 		}
@@ -139,8 +171,14 @@ func runServer(listen string, t *testing.T, endChan chan bool) (io.Closer, error
 		if receiveErr != nil {
 			t.Fatalf("Error receiving on server: %s", receiveErr)
 		}
-		if bytes.Compare(message.Data, []byte("Attach")) != 0 {
-			t.Fatalf("Unexpected data: %s", message.Data)
+
+		command = Command{}
+		decodeErr = message.Decode(&command)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		if command.Verb != "Attach" {
+			t.Fatalf("Unexpected command: %s", command.Verb)
 		}
 
 		// Attach response
@@ -151,7 +189,12 @@ func runServer(listen string, t *testing.T, endChan chan bool) (io.Closer, error
 		defer att.Close()
 		defer conn.Close()
 
-		_, sendErr = message.Ret.Send(&libchan.Message{Data: []byte("Ack"), Stream: att})
+		m = &libchan.Message{Stream: att}
+		encodeErr = m.Encode(&Command{"Ack"})
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		_, sendErr = message.Ret.Send(m)
 		if sendErr != nil {
 			t.Fatalf("Error sending set message: %s", sendErr)
 		}

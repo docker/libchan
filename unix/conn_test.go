@@ -7,6 +7,11 @@ import (
 	"github.com/dotcloud/docker/pkg/testutils"
 )
 
+type Command struct {
+	Name    string
+	Content []byte
+}
+
 func TestPair(t *testing.T) {
 	r, w, err := Pair()
 	if err != nil {
@@ -15,19 +20,29 @@ func TestPair(t *testing.T) {
 	defer r.Close()
 	defer w.Close()
 	testutils.Timeout(t, func() {
+		endChan := make(chan bool)
 		go func() {
 			msg, err := r.Receive(0)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(msg.Data) != "hello world" {
+			var command Command
+			msg.Decode(&command)
+			if string(command.Content) != "hello world" {
 				t.Fatalf("%#v", *msg)
 			}
+			if command.Name != "Hello" {
+				t.Fatalf("%#v", *msg)
+			}
+			close(endChan)
 		}()
-		_, err := w.Send(&lch.Message{Data: []byte("hello world")})
+		message := &lch.Message{}
+		message.Encode(&Command{Name: "Hello", Content: []byte("hello world")})
+		_, err := w.Send(message)
 		if err != nil {
 			t.Fatal(err)
 		}
+		<-endChan
 	})
 }
 
@@ -40,9 +55,15 @@ func TestSendReply(t *testing.T) {
 	defer w.Close()
 	testutils.Timeout(t, func() {
 		// Send
+		endChan := make(chan bool)
 		go func() {
 			// Send a message with mode=R
-			ret, err := w.Send(&lch.Message{Data: []byte("this is the request"), Ret: lch.RetPipe})
+			message := &lch.Message{Ret: lch.RetPipe}
+			encodeErr := message.Encode([]byte("this is the request"))
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			ret, err := w.Send(message)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -51,22 +72,39 @@ func TestSendReply(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(msg.Data) != "this is the reply" {
+			var data []byte
+			decodeErr := msg.Decode(&data)
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			if string(data) != "this is the reply" {
 				t.Fatalf("%#v", msg)
 			}
+			close(endChan)
 		}()
 		// Receive a message with mode=W
 		msg, err := r.Receive(lch.Ret)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(msg.Data) != "this is the request" {
+		var data []byte
+		decodeErr := msg.Decode(&data)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		if string(data) != "this is the request" {
 			t.Fatalf("%#v", msg)
 		}
 		// Send a reply
-		_, err = msg.Ret.Send(&lch.Message{Data: []byte("this is the reply")})
+		message := &lch.Message{}
+		encodeErr := message.Encode([]byte("this is the reply"))
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		_, err = msg.Ret.Send(message)
 		if err != nil {
 			t.Fatal(err)
 		}
+		<-endChan
 	})
 }

@@ -16,7 +16,12 @@ func TestInmemRetPipe(t *testing.T) {
 	wait := make(chan struct{})
 	go func() {
 		defer close(wait)
-		ret, err := w.Send(&Message{Data: []byte("hello"), Ret: RetPipe})
+		message := &Message{Ret: RetPipe}
+		encodeErr := message.Encode([]byte("hello"))
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		ret, err := w.Send(message)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -24,7 +29,12 @@ func TestInmemRetPipe(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(msg.Data) != "this better not crash" {
+		var data []byte
+		err = msg.Decode(&data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "this better not crash" {
 			t.Fatalf("%#v", msg)
 		}
 	}()
@@ -32,7 +42,12 @@ func TestInmemRetPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := msg.Ret.Send(&Message{Data: []byte("this better not crash")}); err != nil {
+	message := &Message{}
+	encodeErr := message.Encode([]byte("this better not crash"))
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	if _, err := msg.Ret.Send(message); err != nil {
 		t.Fatal(err)
 	}
 	<-wait
@@ -48,11 +63,21 @@ func TestSimpleSend(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(msg.Data) != "hello world" {
+			var data []byte
+			err = msg.Decode(&data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != "hello world" {
 				t.Fatalf("%#v", *msg)
 			}
 		}()
-		if _, err := w.Send(&Message{Data: []byte("hello world")}); err != nil {
+		message := &Message{}
+		encodeErr := message.Encode([]byte("hello world"))
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		if _, err := w.Send(message); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -65,7 +90,12 @@ func TestSendReply(t *testing.T) {
 	testutils.Timeout(t, func() {
 		// Send
 		go func() {
-			ret, err := w.Send(&Message{Data: []byte("this is the request"), Ret: RetPipe})
+			message := &Message{Ret: RetPipe}
+			encodeErr := message.Encode([]byte("this is the request"))
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			ret, err := w.Send(message)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,7 +107,12 @@ func TestSendReply(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(msg.Data) != "this is the reply" {
+			var data []byte
+			decodeErr := msg.Decode(&data)
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			if string(data) != "this is the reply" {
 				t.Fatalf("%#v", msg)
 			}
 		}()
@@ -86,14 +121,24 @@ func TestSendReply(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(msg.Data) != "this is the request" {
+		var data []byte
+		decodeErr := msg.Decode(&data)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		if string(data) != "this is the request" {
 			t.Fatalf("%#v", msg)
 		}
 		if msg.Ret == nil {
 			t.Fatalf("%#v", msg)
 		}
 		// Send a reply
-		_, err = msg.Ret.Send(&Message{Data: []byte("this is the reply")})
+		message := &Message{}
+		encodeErr := message.Encode([]byte("this is the reply"))
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		_, err = msg.Ret.Send(message)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +159,12 @@ func TestSendFile(t *testing.T) {
 	tmp.Seek(0, 0)
 	testutils.Timeout(t, func() {
 		go func() {
-			_, err := w.Send(&Message{Data: []byte("path=" + tmp.Name()), Stream: tmp})
+			message := &Message{Stream: tmp}
+			encodeErr := message.Encode([]byte("path=" + tmp.Name()))
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			_, err := w.Send(message)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +173,12 @@ func TestSendFile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(msg.Data) != "path="+tmp.Name() {
+		var data []byte
+		decodeErr := msg.Decode(&data)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		if string(data) != "path="+tmp.Name() {
 			t.Fatalf("%#v", msg)
 		}
 		txt, err := ioutil.ReadAll(msg.Stream)
