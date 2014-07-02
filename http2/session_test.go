@@ -3,7 +3,10 @@ package http2
 import (
 	"io"
 	"net"
+	"os"
+	"runtime/pprof"
 	"testing"
+	"time"
 )
 
 type InOutMessage struct {
@@ -155,10 +158,11 @@ func TestChannelEncoding(t *testing.T) {
 	SpawnClientServerTest(t, "localhost:12843", client, server)
 }
 
-type TestRoutine func(t *testing.T)
-
 type ClientRoutine func(t *testing.T, server string)
 type ServerRoutine func(t *testing.T, listener net.Listener)
+
+var ClientServerTimeout = 300 * time.Millisecond
+var DumpStackOnTimeout = true
 
 // SpawnClientServer ensures two routines are run in parallel and a
 // failure in one will cause the test to fail
@@ -189,6 +193,8 @@ func SpawnClientServerTest(t *testing.T, host string, client ClientRoutine, serv
 		server(t, listener)
 	}()
 
+	timeout := time.After(ClientServerTimeout)
+
 	for endClient != nil || endServer != nil {
 		select {
 		case <-endClient:
@@ -201,6 +207,11 @@ func SpawnClientServerTest(t *testing.T, host string, client ClientRoutine, serv
 				t.Fatal("Server failed")
 			}
 			endServer = nil
+		case <-timeout:
+			if DumpStackOnTimeout {
+				pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
+			}
+			t.Fatal("Timeout")
 		}
 	}
 
