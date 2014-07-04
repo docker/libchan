@@ -5,6 +5,12 @@ import (
 	"io"
 )
 
+type Channel interface {
+	Communicate(message interface{}) error
+	Close() error
+	Direction() int
+}
+
 type Sender interface {
 	Send(msg *Message) (Receiver, error)
 	Close() error

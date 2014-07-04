@@ -1,9 +1,12 @@
 package http2
 
 import (
+	"errors"
 	"io"
 	"net"
 	"net/http"
+	"strconv"
+	"sync"
 
 	"github.com/docker/spdystream"
 	"github.com/ugorji/go/codec"
@@ -20,30 +23,36 @@ type Session struct {
 	conn *spdystream.Connection
 
 	streamChan chan *spdystream.Stream
+
+	referenceCounter int
+	byteStreamC      *sync.Cond
+	byteStreams      map[string]*ByteStream
 }
 
-// ReceiveChannel receives messages accross a session.  If this
-// channel was intended to be used on remote end, any calls to
-// receive will fail.  A remote ReceiveChannel should be sent
-// on another channel to the remote endpoint to use.  When the
-// channel is closed an EOF is returned.
-type ReceiveChannel struct {
-	stream  *spdystream.Stream
-	session *Session
-
-	remote bool
+type Channel struct {
+	stream    *spdystream.Stream
+	session   *Session
+	direction Direction
 }
 
-type SendChannel struct {
-	stream  *spdystream.Stream
-	session *Session
+type ByteStream struct {
+	referenceId string
 
-	remote bool
+	stream io.ReadWriteCloser
 }
 
 func newSession(conn net.Conn, server bool) (*Session, error) {
+	var referenceCounter int
+	if server {
+		referenceCounter = 2
+	} else {
+		referenceCounter = 1
+	}
 	session := &Session{
-		streamChan: make(chan *spdystream.Stream),
+		streamChan:       make(chan *spdystream.Stream),
+		referenceCounter: referenceCounter,
+		byteStreamC:      sync.NewCond(new(sync.Mutex)),
+		byteStreams:      make(map[string]*ByteStream),
 	}
 
 	spdyConn, spdyErr := spdystream.NewConnection(conn, server)
@@ -58,86 +67,155 @@ func newSession(conn net.Conn, server bool) (*Session, error) {
 }
 
 func (s *Session) newStreamHandler(stream *spdystream.Stream) {
-	stream.SendReply(http.Header{}, false)
-	if stream.Parent() == nil {
-		s.streamChan <- stream
+	referenceId := stream.Headers().Get("libchan-ref")
+	if referenceId != "" {
+		byteStream := &ByteStream{
+			referenceId: referenceId,
+			stream:      stream,
+		}
+		s.byteStreamC.L.Lock()
+		s.byteStreams[referenceId] = byteStream
+		s.byteStreamC.Broadcast()
+		s.byteStreamC.L.Unlock()
+	} else {
+		if stream.Parent() == nil {
+			s.streamChan <- stream
+		}
 	}
+
+	stream.SendReply(http.Header{}, false)
+}
+
+func (s *Session) GetByteStream(referenceId string) *ByteStream {
+	s.byteStreamC.L.Lock()
+	bs, ok := s.byteStreams[referenceId]
+	if !ok {
+		s.byteStreamC.Wait()
+		bs, ok = s.byteStreams[referenceId]
+	}
+	s.byteStreamC.L.Unlock()
+	return bs
+}
+
+func (s *Session) createByteStream() (io.ReadWriteCloser, error) {
+	referenceId := strconv.Itoa(s.referenceCounter) // Add machine id?
+	s.referenceCounter = s.referenceCounter + 2
+	headers := http.Header{}
+	headers.Set("libchan-ref", referenceId)
+	stream, streamErr := s.conn.CreateStream(headers, nil, false)
+	if streamErr != nil {
+		return nil, streamErr
+	}
+	bs := &ByteStream{
+		referenceId: referenceId,
+		stream:      stream,
+	}
+	s.byteStreamC.L.Lock()
+	s.byteStreams[referenceId] = bs
+	s.byteStreamC.L.Unlock()
+	return bs, nil
 }
 
 func (s *Session) Close() error {
 	return s.conn.Close()
 }
 
-func (s *Session) NewSendChannel() (*SendChannel, error) {
+func (s *Session) NewSendChannel() (*Channel, error) {
 	stream, streamErr := s.conn.CreateStream(http.Header{}, nil, false)
 	if streamErr != nil {
 		return nil, streamErr
 	}
-	return &SendChannel{stream: stream, session: s}, nil
+	return &Channel{stream: stream, session: s, direction: Out}, nil
 }
 
-func (s *Session) WaitReceiveChannel() (*ReceiveChannel, error) {
+func (s *Session) WaitReceiveChannel() (*Channel, error) {
 	stream, ok := <-s.streamChan
 	if !ok {
 		return nil, io.EOF
 	}
 
-	return &ReceiveChannel{
-		stream:  stream,
-		session: s,
-		remote:  false,
+	return &Channel{
+		stream:    stream,
+		session:   s,
+		direction: In,
 	}, nil
 }
 
-func (c *SendChannel) NewSubChannel(direction Direction) (*SendChannel, *ReceiveChannel, error) {
+func (c *Channel) NewSubChannel(direction Direction) (*Channel, error) {
+	if c.direction == In {
+		return nil, errors.New("Cannot create sub channel of an input channel")
+	}
 	stream, streamErr := c.stream.CreateSubStream(http.Header{}, false)
 	if streamErr != nil {
-		return nil, nil, streamErr
+		return nil, streamErr
 	}
-	return &SendChannel{
-			stream:  stream,
-			session: c.session,
-			remote:  direction == Out,
-		}, &ReceiveChannel{
-			stream:  stream,
-			session: c.session,
-			remote:  direction == In,
-		}, nil
+	return &Channel{
+		stream:    stream,
+		session:   c.session,
+		direction: direction,
+	}, nil
 }
 
-func (c *SendChannel) Send(message interface{}) error {
-	handler := getMsgPackHandler(c.session)
-	var buf []byte
-	encoder := codec.NewEncoderBytes(&buf, handler)
-	encodeErr := encoder.Encode(message)
-	if encodeErr != nil {
-		return encodeErr
-	}
-	// TODO check length of buf
-	_, writeErr := c.stream.Write(buf)
-	if writeErr != nil {
-		return writeErr
+func (c *Channel) CreateByteStream() (io.ReadWriteCloser, error) {
+	return c.session.createByteStream()
+}
+
+func (c *Channel) Communicate(message interface{}) error {
+	if c.direction == Out {
+		handler := getMsgPackHandler(c.session)
+		var buf []byte
+		encoder := codec.NewEncoderBytes(&buf, handler)
+		encodeErr := encoder.Encode(message)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		// TODO check length of buf
+		_, writeErr := c.stream.Write(buf)
+		if writeErr != nil {
+			return writeErr
+		}
+	} else if c.direction == In {
+		buf, readErr := c.stream.ReadData()
+		if readErr != nil {
+			if readErr == io.EOF {
+				c.stream.Close()
+			}
+			return readErr
+		}
+		handler := getMsgPackHandler(c.session)
+		decoder := codec.NewDecoderBytes(buf, handler)
+		decodeErr := decoder.Decode(message)
+		if decodeErr != nil {
+			return decodeErr
+		}
+	} else {
+		return errors.New("Invalid direction")
 	}
 	return nil
+
 }
 
-func (c *SendChannel) Close() error {
+func (c *Channel) Close() error {
 	return c.stream.Close()
 }
 
-func (c *ReceiveChannel) Receive(message interface{}) error {
-	buf, readErr := c.stream.ReadData()
-	if readErr != nil {
-		if readErr == io.EOF {
-			c.stream.Close()
-		}
-		return readErr
+func (b *ByteStream) Read(p []byte) (n int, err error) {
+	if b == nil || b.stream == nil {
+		return 0, errors.New("Byte stream is nil")
 	}
-	handler := getMsgPackHandler(c.session)
-	decoder := codec.NewDecoderBytes(buf, handler)
-	decodeErr := decoder.Decode(message)
-	if decodeErr != nil {
-		return decodeErr
+	return b.stream.Read(p)
+}
+
+func (b *ByteStream) Write(data []byte) (n int, err error) {
+	if b == nil || b.stream == nil {
+		return 0, errors.New("Byte stream is nil")
 	}
-	return nil
+	return b.stream.Write(data)
+}
+
+func (b *ByteStream) Close() error {
+	if b == nil || b.stream == nil {
+		return errors.New("Byte stream is nil")
+	}
+	return b.stream.Close()
 }
