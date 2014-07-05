@@ -19,13 +19,13 @@ type StreamSession struct {
 
 	streamCond     *sync.Cond
 	streamChan     chan *spdystream.Stream
-	subStreamChans map[string]chan *spdystream.Stream
+	subStreamChans map[uint32]chan *spdystream.Stream
 }
 
 func (s *StreamSession) addStreamChan(stream *spdystream.Stream, streamChan chan *spdystream.Stream) {
 	s.streamCond.L.Lock()
 	defer s.streamCond.L.Unlock()
-	s.subStreamChans[stream.String()] = streamChan
+	s.subStreamChans[stream.Id()] = streamChan
 	s.streamCond.Broadcast()
 }
 
@@ -35,11 +35,14 @@ func (s *StreamSession) getStreamChan(stream *spdystream.Stream) chan *spdystrea
 	}
 	s.streamCond.L.Lock()
 	defer s.streamCond.L.Unlock()
-	streamChan, ok := s.subStreamChans[stream.String()]
+
+	streamId := stream.Id()
+
+	streamChan, ok := s.subStreamChans[streamId]
 	for !ok {
 		// TODO Test for stream being closed
 		s.streamCond.Wait()
-		streamChan, ok = s.subStreamChans[stream.String()]
+		streamChan, ok = s.subStreamChans[streamId]
 	}
 	return streamChan
 }
