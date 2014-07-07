@@ -7,6 +7,8 @@ import (
 	"runtime/pprof"
 	"testing"
 	"time"
+
+	"github.com/docker/libchan"
 )
 
 type InOutMessage struct {
@@ -21,12 +23,12 @@ type SimpleMessage struct {
 
 func TestChannelEncoding(t *testing.T) {
 	client := func(t *testing.T, sender *Channel) {
-		recv, err1 := sender.NewSubChannel(In)
+		recv, err1 := sender.NewSubChannel(libchan.In)
 		if err1 != nil {
 			t.Fatalf("Error creating receive channel: %s", err1)
 		}
 
-		send, err2 := sender.NewSubChannel(Out)
+		send, err2 := sender.NewSubChannel(libchan.Out)
 		if err2 != nil {
 			t.Fatalf("Error creating send channel: %s", err2)
 		}
@@ -125,7 +127,7 @@ type AbstractionMessage struct {
 
 func TestChannelAbstraction(t *testing.T) {
 	client := func(t *testing.T, sender *Channel) {
-		channel, channelErr := sender.NewSubChannel(Out)
+		channel, channelErr := sender.NewSubChannel(libchan.Out)
 		if channelErr != nil {
 			t.Fatalf("Error creating sub channel: %s", channelErr)
 		}
@@ -171,7 +173,7 @@ type MessageWithInput struct {
 
 func TestBadDirection(t *testing.T) {
 	client := func(t *testing.T, sender *Channel) {
-		channel, channelErr := sender.NewSubChannel(In)
+		channel, channelErr := sender.NewSubChannel(libchan.In)
 		if channelErr != nil {
 			t.Fatalf("Error creating sub channel: %s", channelErr)
 		}

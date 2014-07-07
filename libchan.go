@@ -5,10 +5,17 @@ import (
 	"io"
 )
 
+type Direction uint8
+
+const (
+	Out = Direction(0x01)
+	In  = Direction(0x02)
+)
+
 type Channel interface {
 	Communicate(message interface{}) error
 	Close() error
-	Direction() int
+	Direction() Direction
 }
 
 type Sender interface {

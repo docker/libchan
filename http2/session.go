@@ -8,15 +8,9 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/docker/libchan"
 	"github.com/docker/spdystream"
 	"github.com/ugorji/go/codec"
-)
-
-type Direction uint8
-
-const (
-	Out = Direction(0x01)
-	In  = Direction(0x02)
 )
 
 type Session struct {
@@ -32,7 +26,7 @@ type Session struct {
 type Channel struct {
 	stream    *spdystream.Stream
 	session   *Session
-	direction Direction
+	direction libchan.Direction
 }
 
 type ByteStream struct {
@@ -125,7 +119,7 @@ func (s *Session) NewSendChannel() (*Channel, error) {
 	if streamErr != nil {
 		return nil, streamErr
 	}
-	return &Channel{stream: stream, session: s, direction: Out}, nil
+	return &Channel{stream: stream, session: s, direction: libchan.Out}, nil
 }
 
 func (s *Session) WaitReceiveChannel() (*Channel, error) {
@@ -137,12 +131,12 @@ func (s *Session) WaitReceiveChannel() (*Channel, error) {
 	return &Channel{
 		stream:    stream,
 		session:   s,
-		direction: In,
+		direction: libchan.In,
 	}, nil
 }
 
-func (c *Channel) NewSubChannel(direction Direction) (*Channel, error) {
-	if c.direction == In {
+func (c *Channel) NewSubChannel(direction libchan.Direction) (*Channel, error) {
+	if c.direction == libchan.In {
 		return nil, errors.New("Cannot create sub channel of an input channel")
 	}
 	stream, streamErr := c.stream.CreateSubStream(http.Header{}, false)
@@ -161,7 +155,7 @@ func (c *Channel) CreateByteStream() (io.ReadWriteCloser, error) {
 }
 
 func (c *Channel) Communicate(message interface{}) error {
-	if c.direction == Out {
+	if c.direction == libchan.Out {
 		handler := getMsgPackHandler(c.session)
 		var buf []byte
 		encoder := codec.NewEncoderBytes(&buf, handler)
@@ -174,7 +168,7 @@ func (c *Channel) Communicate(message interface{}) error {
 		if writeErr != nil {
 			return writeErr
 		}
-	} else if c.direction == In {
+	} else if c.direction == libchan.In {
 		buf, readErr := c.stream.ReadData()
 		if readErr != nil {
 			if readErr == io.EOF {
@@ -197,6 +191,10 @@ func (c *Channel) Communicate(message interface{}) error {
 
 func (c *Channel) Close() error {
 	return c.stream.Close()
+}
+
+func (c *Channel) Direction() libchan.Direction {
+	return c.direction
 }
 
 func (b *ByteStream) Read(p []byte) (n int, err error) {
