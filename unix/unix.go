@@ -1,63 +1,17 @@
 package unix
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"os"
 	"syscall"
-)
 
-func debugCheckpoint(msg string, args ...interface{}) {
-	if os.Getenv("DEBUG") == "" {
-		return
-	}
-	os.Stdout.Sync()
-	tty, _ := os.OpenFile("/dev/tty", os.O_RDWR, 0700)
-	fmt.Fprintf(tty, msg, args...)
-	bufio.NewScanner(tty).Scan()
-	tty.Close()
-}
+	"github.com/docker/libchan/streamutil"
+)
 
 type UnixConn struct {
 	*net.UnixConn
 	fds []*os.File
-}
-
-// Framing:
-// In order to handle framing in Send/Recieve, as these give frame
-// boundaries we use a very simple 4 bytes header. It is a big endiand
-// uint32 where the high bit is set if the message includes a file
-// descriptor. The rest of the uint32 is the length of the next frame.
-// We need the bit in order to be able to assign recieved fds to
-// the right message, as multiple messages may be coalesced into
-// a single recieve operation.
-func makeHeader(data []byte, fds []int) ([]byte, error) {
-	header := make([]byte, 4)
-
-	length := uint32(len(data))
-
-	if length > 0x7fffffff {
-		return nil, fmt.Errorf("Data to large")
-	}
-
-	if len(fds) != 0 {
-		length = length | 0x80000000
-	}
-	header[0] = byte((length >> 24) & 0xff)
-	header[1] = byte((length >> 16) & 0xff)
-	header[2] = byte((length >> 8) & 0xff)
-	header[3] = byte((length >> 0) & 0xff)
-
-	return header, nil
-}
-
-func parseHeader(header []byte) (uint32, bool) {
-	length := uint32(header[0])<<24 | uint32(header[1])<<16 | uint32(header[2])<<8 | uint32(header[3])
-	hasFd := length&0x80000000 != 0
-	length = length & ^uint32(0x80000000)
-
-	return length, hasFd
 }
 
 func FileConn(f *os.File) (*UnixConn, error) {
@@ -83,7 +37,7 @@ func (conn *UnixConn) Send(data []byte, f *os.File) error {
 		if f != nil {
 			fd = int(f.Fd())
 		}
-		debugCheckpoint("===DEBUG=== about to send '%s'[%d]. Hit enter to confirm: ", data, fd)
+		streamutil.DebugCheckpoint("===DEBUG=== about to send '%s'[%d]. Hit enter to confirm: ", data, fd)
 	}
 	var fds []int
 	if f != nil {
@@ -111,7 +65,7 @@ func (conn *UnixConn) Receive() (rdata []byte, rf *os.File, rerr error) {
 		if rf != nil {
 			fd = int(rf.Fd())
 		}
-		debugCheckpoint("===DEBUG=== Receive() -> '%s'[%d]. Hit enter to continue.\n", rdata, fd)
+		streamutil.DebugCheckpoint("===DEBUG=== Receive() -> '%s'[%d]. Hit enter to continue.\n", rdata, fd)
 	}()
 
 	// Read header
@@ -126,7 +80,7 @@ func (conn *UnixConn) Receive() (rdata []byte, rf *os.File, rerr error) {
 		nRead = nRead + uint32(n)
 	}
 
-	length, hasFd := parseHeader(header)
+	length, hasFd := streamutil.ParseHeader(header)
 
 	if hasFd {
 		if len(conn.fds) == 0 {
@@ -167,7 +121,7 @@ func (conn *UnixConn) receiveUnix(buf []byte) (int, error) {
 }
 
 func (conn *UnixConn) sendUnix(data []byte, fds ...int) error {
-	header, err := makeHeader(data, fds)
+	header, err := streamutil.MakeHeader(data, fds)
 	if err != nil {
 		return err
 	}
@@ -265,7 +219,7 @@ func SocketPair() (a *os.File, b *os.File, err error) {
 		if b != nil {
 			fdB = int(b.Fd())
 		}
-		debugCheckpoint("===DEBUG=== SocketPair() = [%d-%d]. Hit enter to confirm: ", fdA, fdB)
+		streamutil.DebugCheckpoint("===DEBUG=== SocketPair() = [%d-%d]. Hit enter to confirm: ", fdA, fdB)
 	}()
 	pair, err := socketpair()
 	if err != nil {
@@ -275,8 +229,8 @@ func SocketPair() (a *os.File, b *os.File, err error) {
 }
 
 func USocketPair() (*UnixConn, *UnixConn, error) {
-	debugCheckpoint("===DEBUG=== USocketPair(). Hit enter to confirm: ")
-	defer debugCheckpoint("===DEBUG=== USocketPair() returned. Hit enter to confirm ")
+	streamutil.DebugCheckpoint("===DEBUG=== USocketPair(). Hit enter to confirm: ")
+	defer streamutil.DebugCheckpoint("===DEBUG=== USocketPair() returned. Hit enter to confirm ")
 	a, b, err := SocketPair()
 	if err != nil {
 		return nil, nil, err
@@ -301,7 +255,7 @@ func USocketPair() (*UnixConn, *UnixConn, error) {
 // to close both.
 func FdConn(fd int) (n *net.UnixConn, err error) {
 	{
-		debugCheckpoint("===DEBUG=== FdConn([%d]) = (unknown fd). Hit enter to confirm: ", fd)
+		streamutil.DebugCheckpoint("===DEBUG=== FdConn([%d]) = (unknown fd). Hit enter to confirm: ", fd)
 	}
 	f := os.NewFile(uintptr(fd), fmt.Sprintf("%d", fd))
 	conn, err := net.FileConn(f)
