@@ -35,6 +35,10 @@ type ByteStream struct {
 	stream io.ReadWriteCloser
 }
 
+func NewClientSession(conn net.Conn) (*Session, error) {
+	return newSession(conn, false)
+}
+
 func newSession(conn net.Conn, server bool) (*Session, error) {
 	var referenceCounter int
 	if server {
