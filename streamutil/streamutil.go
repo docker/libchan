@@ -31,7 +31,7 @@ func MakeHeader(data []byte, fds []int) ([]byte, error) {
 	length := uint32(len(data))
 
 	if length > 0x7fffffff {
-		return nil, fmt.Errorf("Data to large")
+		return nil, fmt.Errorf("Data too large")
 	}
 
 	if len(fds) != 0 {
