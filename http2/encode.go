@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/ugorji/go/codec"
 	"reflect"
+
 	"github.com/docker/libchan"
 )
 
@@ -65,15 +66,23 @@ func (h *sessionHandler) decodeChannel(v reflect.Value, b []byte) error {
 }
 
 func (h *sessionHandler) encodeStream(v reflect.Value) ([]byte, error) {
-	bs := v.Interface().(ByteStream)
-	if bs.referenceId == "" {
+	bs := v.Interface().(libchan.ByteStream)
+	if bs.ReferenceId == 0 {
 		return nil, errors.New("bad type")
 	}
-	return []byte(bs.referenceId), nil
+	var buf [8]byte
+	written := binary.PutUvarint(buf[:], uint64(bs.ReferenceId))
+
+	return buf[:written], nil
 }
 
 func (h *sessionHandler) decodeStream(v reflect.Value, b []byte) error {
-	bs := h.session.GetByteStream(string(b))
+	referenceId, readN := binary.Uvarint(b)
+	if readN == 0 {
+		return errors.New("bad reference id")
+	}
+
+	bs := h.session.GetByteStream(libchan.ReferenceId(referenceId))
 	if bs != nil {
 		v.Set(reflect.ValueOf(*bs))
 	}
@@ -83,13 +92,13 @@ func (h *sessionHandler) decodeStream(v reflect.Value, b []byte) error {
 
 func getMsgPackHandler(session *Session) *codec.MsgpackHandle {
 	h := &sessionHandler{session: session}
-	mh := &codec.MsgpackHandle{}
+	mh := &codec.MsgpackHandle{WriteExt: true}
 	err := mh.AddExt(reflect.TypeOf(Channel{}), 1, h.encodeChannel, h.decodeChannel)
 	if err != nil {
 		panic(err)
 	}
 
-	err = mh.AddExt(reflect.TypeOf(ByteStream{}), 2, h.encodeStream, h.decodeStream)
+	err = mh.AddExt(reflect.TypeOf(libchan.ByteStream{}), 2, h.encodeStream, h.decodeStream)
 	if err != nil {
 		panic(err)
 	}
