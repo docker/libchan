@@ -2,9 +2,12 @@ package libchan
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
+	"runtime/pprof"
 	"testing"
+	"time"
 
 	"github.com/dotcloud/docker/pkg/testutils"
 )
@@ -189,4 +192,179 @@ func TestSendFile(t *testing.T) {
 			t.Fatalf("%s\n", txt)
 		}
 	})
+}
+
+type ComplexMessage struct {
+	Message  string
+	Sender   Channel
+	Receiver Channel
+	Stream   io.ReadWriteCloser
+}
+
+type SimpleMessage struct {
+	Message string
+}
+
+func TestComplexMessage(t *testing.T) {
+	sender := func(t *testing.T, c Channel) {
+		s, sErr := c.CreateSubChannel(Out)
+		if sErr != nil {
+			t.Fatalf("Error creating sender: %s", sErr)
+		}
+		r, rErr := c.CreateSubChannel(In)
+		if rErr != nil {
+			t.Fatalf("Error creating receiver: %s", rErr)
+		}
+		bs, bsErr := c.CreateByteStream(nil)
+		if bsErr != nil {
+			t.Fatalf("Error creating bytestream: %s", bsErr)
+		}
+
+		m1 := &ComplexMessage{
+			Message:  "This is a complex message",
+			Sender:   r,
+			Receiver: s,
+			Stream:   bs,
+		}
+
+		sendErr := c.Communicate(m1)
+		if sendErr != nil {
+			t.Fatalf("Error sending: %s", sendErr)
+		}
+
+		m2 := &SimpleMessage{}
+		receiveErr := m1.Sender.Communicate(m2)
+		if receiveErr != nil {
+			t.Fatalf("Error receiving from message: %s", receiveErr)
+		}
+
+		if expected := "Return to sender"; expected != m2.Message {
+			t.Fatalf("Unexpected message\n\tExpected: %s\n\tActual: %s", expected, m2.Message)
+		}
+
+		m3 := &SimpleMessage{"Receive returned"}
+		sendErr = m1.Receiver.Communicate(m3)
+		if sendErr != nil {
+			t.Fatalf("Error sending return: %s", sendErr)
+		}
+
+		_, writeErr := m1.Stream.Write([]byte("Hello there server!"))
+		if writeErr != nil {
+			t.Fatalf("Error writing to byte stream: %s", writeErr)
+		}
+
+		readBytes := make([]byte, 30)
+		n, readErr := m1.Stream.Read(readBytes)
+		if readErr != nil {
+			t.Fatalf("Error reading from byte stream: %s", readErr)
+		}
+		if expected := "G'day client ☺"; string(readBytes[:n]) != expected {
+			t.Fatalf("Unexpected read value:\n\tExpected: %q\n\tActual: %q", expected, string(readBytes[:n]))
+		}
+
+		closeErr := m1.Stream.Close()
+		if closeErr != nil {
+			t.Fatalf("Error closing byte stream: %s", closeErr)
+		}
+	}
+	receiver := func(t *testing.T, c Channel) {
+		m1 := &ComplexMessage{}
+		receiveErr := c.Communicate(m1)
+		if receiveErr != nil {
+			t.Fatalf("Error receiving: %s", receiveErr)
+		}
+
+		if expected := "This is a complex message"; m1.Message != expected {
+			t.Fatalf("Unexpected message\n\tExpected: %s\n\tActual: %s", expected, m1.Message)
+		}
+
+		if m1.Sender.Direction() != Out {
+			t.Fatalf("Wrong direction for sender")
+		}
+
+		m2 := &SimpleMessage{"Return to sender"}
+		sendErr := m1.Sender.Communicate(m2)
+		if sendErr != nil {
+			t.Fatalf("Error sending return: %s", sendErr)
+		}
+
+		m3 := &SimpleMessage{}
+		receiveErr = m1.Receiver.Communicate(m3)
+		if receiveErr != nil {
+			t.Fatalf("Error receiving from message: %s", receiveErr)
+		}
+
+		if expected := "Receive returned"; expected != m3.Message {
+			t.Fatalf("Unexpected message\n\tExpected: %s\n\tActual: %s", expected, m3.Message)
+		}
+
+		readBytes := make([]byte, 30)
+		n, readErr := m1.Stream.Read(readBytes)
+		if readErr != nil {
+			t.Fatalf("Error reading from byte stream: %s", readErr)
+		}
+		if expected := "Hello there server!"; string(readBytes[:n]) != expected {
+			t.Fatalf("Unexpected read value:\n\tExpected: %q\n\tActual: %q", expected, string(readBytes[:n]))
+		}
+
+		_, writeErr := m1.Stream.Write([]byte("G'day client ☺"))
+		if writeErr != nil {
+			t.Fatalf("Error writing to byte stream: %s", writeErr)
+		}
+
+		closeErr := m1.Stream.Close()
+		if closeErr != nil {
+			t.Fatalf("Error closing byte stream: %s", closeErr)
+		}
+
+	}
+	SpawnChannelTestRoutines(t, sender, receiver)
+}
+
+type TestRoutine func(t *testing.T, c Channel)
+
+var RoutineTimeout = 300 * time.Millisecond
+var DumpStackOnTimeout = true
+
+func SpawnChannelTestRoutines(t *testing.T, r1, r2 TestRoutine) {
+	end1 := make(chan bool)
+	end2 := make(chan bool)
+	session := NewInMemSession()
+
+	go func() {
+		defer close(end1)
+		s := session.NewSendChannel()
+		defer s.Close()
+		r1(t, s)
+	}()
+
+	go func() {
+		defer close(end2)
+		r := session.WaitReceiveChannel()
+		defer r.Close()
+		r2(t, r)
+	}()
+
+	timeout := time.After(RoutineTimeout)
+
+	for end1 != nil || end2 != nil {
+		select {
+		case <-end1:
+			if t.Failed() {
+				t.Fatal("Test routine 1 failed")
+			}
+			end1 = nil
+		case <-end2:
+			if t.Failed() {
+				t.Fatal("Test routine 2 failed")
+			}
+			end2 = nil
+		case <-timeout:
+			if DumpStackOnTimeout {
+				pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
+			}
+			t.Fatal("Timeout")
+		}
+	}
+
 }
