@@ -19,8 +19,8 @@ type InMemSession struct {
 	handler codec.Handle
 
 	referenceLock sync.Mutex
-	referenceId   ReferenceId
-	byteStreams   map[ReferenceId]*ByteStream
+	referenceId   uint64
+	byteStreams   map[uint64]*byteStream
 }
 
 func NewInMemSession() *InMemSession {
@@ -30,7 +30,7 @@ func NewInMemSession() *InMemSession {
 		outPipes:    make(map[uint64]*io.PipeWriter),
 		pipeId:      1,
 		referenceId: 2,
-		byteStreams: make(map[ReferenceId]*ByteStream),
+		byteStreams: make(map[uint64]*byteStream),
 	}
 	session.handler = getMsgPackHandler(session)
 
@@ -46,10 +46,6 @@ func (s *InMemSession) createPipe() (uint64, *io.PipeReader, *io.PipeWriter) {
 	s.outPipes[id] = out
 	s.pipeLock.Unlock()
 	return id, in, out
-}
-
-func (s *InMemSession) RegisterListener(listener ByteStreamListener) {
-	// Not supported
 }
 
 func (s *InMemSession) NewSendChannel() Channel {
@@ -92,22 +88,19 @@ type InMemChannel struct {
 	encoder *codec.Encoder
 }
 
-func (c *InMemChannel) CreateByteStream(provider ByteStreamDialer) (*ByteStream, error) {
-	if provider != nil {
-		return nil, errors.New("Byte stream providers not supported")
-	}
+func (c *InMemChannel) CreateByteStream() (io.ReadWriteCloser, error) { //provider ByteStreamDialer, *ByteStream
 	in1, out1 := io.Pipe()
 	in2, out2 := io.Pipe()
 	rw1 := &biDirectionalPipe{in1, out2}
 	rw2 := &biDirectionalPipe{in2, out1}
-	bs := &ByteStream{
+	bs := &byteStream{
 		ReferenceId: c.session.referenceId,
 		Stream:      rw1,
 	}
 
 	c.session.referenceLock.Lock()
 	c.session.byteStreams[c.session.referenceId] = bs
-	c.session.byteStreams[c.session.referenceId+1] = &ByteStream{
+	c.session.byteStreams[c.session.referenceId+1] = &byteStream{
 		ReferenceId: c.session.referenceId + 1,
 		Stream:      rw2,
 	}
@@ -213,7 +206,7 @@ func (h *sessionHandler) decodeChannel(v reflect.Value, b []byte) error {
 }
 
 func (h *sessionHandler) encodeStream(v reflect.Value) ([]byte, error) {
-	bs := v.Interface().(ByteStream)
+	bs := v.Interface().(byteStream)
 	if bs.ReferenceId == 0 {
 		return nil, errors.New("bad type")
 	}
@@ -229,7 +222,7 @@ func (h *sessionHandler) decodeStream(v reflect.Value, b []byte) error {
 		return errors.New("bad reference id")
 	}
 
-	bs, ok := h.session.byteStreams[ReferenceId(referenceId)]
+	bs, ok := h.session.byteStreams[referenceId]
 	if !ok {
 		return errors.New("Byte stream does not exist")
 	}
@@ -249,12 +242,38 @@ func getMsgPackHandler(session *InMemSession) *codec.MsgpackHandle {
 		panic(err)
 	}
 
-	err = mh.AddExt(reflect.TypeOf(ByteStream{}), 2, h.encodeStream, h.decodeStream)
+	err = mh.AddExt(reflect.TypeOf(byteStream{}), 2, h.encodeStream, h.decodeStream)
 	if err != nil {
 		panic(err)
 	}
 
 	return mh
+}
+
+type byteStream struct {
+	Stream      io.ReadWriteCloser
+	ReferenceId uint64
+}
+
+func (b *byteStream) Read(p []byte) (n int, err error) {
+	if b == nil || b.Stream == nil {
+		return 0, errors.New("Byte stream is nil")
+	}
+	return b.Stream.Read(p)
+}
+
+func (b *byteStream) Write(data []byte) (n int, err error) {
+	if b == nil || b.Stream == nil {
+		return 0, errors.New("Byte stream is nil")
+	}
+	return b.Stream.Write(data)
+}
+
+func (b *byteStream) Close() error {
+	if b == nil || b.Stream == nil {
+		return errors.New("Byte stream is nil")
+	}
+	return b.Stream.Close()
 }
 
 type biDirectionalPipe struct {

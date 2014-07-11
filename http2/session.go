@@ -14,14 +14,19 @@ import (
 )
 
 type Session struct {
-	conn *spdystream.Connection
+	conn    *spdystream.Connection
+	handler codec.Handle
 
 	streamChan chan *spdystream.Stream
 
 	referenceLock    sync.Mutex
-	referenceCounter libchan.ReferenceId
+	referenceCounter uint64
 	byteStreamC      *sync.Cond
-	byteStreams      map[libchan.ReferenceId]*libchan.ByteStream
+	byteStreams      map[uint64]*byteStream
+
+	netConnC *sync.Cond
+	netConns map[byte]map[string]net.Conn
+	networks map[string]byte
 }
 
 type Channel struct {
@@ -35,7 +40,7 @@ func NewClientSession(conn net.Conn) (*Session, error) {
 }
 
 func newSession(conn net.Conn, server bool) (*Session, error) {
-	var referenceCounter libchan.ReferenceId
+	var referenceCounter uint64
 	if server {
 		referenceCounter = 2
 	} else {
@@ -45,7 +50,10 @@ func newSession(conn net.Conn, server bool) (*Session, error) {
 		streamChan:       make(chan *spdystream.Stream),
 		referenceCounter: referenceCounter,
 		byteStreamC:      sync.NewCond(new(sync.Mutex)),
-		byteStreams:      make(map[libchan.ReferenceId]*libchan.ByteStream),
+		byteStreams:      make(map[uint64]*byteStream),
+		netConnC:         sync.NewCond(new(sync.Mutex)),
+		netConns:         make(map[byte]map[string]net.Conn),
+		networks:         make(map[string]byte),
 	}
 
 	spdyConn, spdyErr := spdystream.NewConnection(conn, server)
@@ -55,6 +63,7 @@ func newSession(conn net.Conn, server bool) (*Session, error) {
 	go spdyConn.Serve(session.newStreamHandler)
 
 	session.conn = spdyConn
+	session.handler = session.initializeHandler()
 
 	return session, nil
 }
@@ -70,12 +79,12 @@ func (s *Session) newStreamHandler(stream *spdystream.Stream) {
 			returnHeaders.Set("status", "400")
 			finish = true
 		} else {
-			byteStream := &libchan.ByteStream{
-				ReferenceId: libchan.ReferenceId(referenceId),
+			byteStream := &byteStream{
+				ReferenceId: referenceId,
 				Stream:      stream,
 			}
 			s.byteStreamC.L.Lock()
-			s.byteStreams[libchan.ReferenceId(referenceId)] = byteStream
+			s.byteStreams[referenceId] = byteStream
 			s.byteStreamC.Broadcast()
 			s.byteStreamC.L.Unlock()
 		}
@@ -88,7 +97,7 @@ func (s *Session) newStreamHandler(stream *spdystream.Stream) {
 	stream.SendReply(returnHeaders, finish)
 }
 
-func (s *Session) GetByteStream(referenceId libchan.ReferenceId) *libchan.ByteStream {
+func (s *Session) GetByteStream(referenceId uint64) *byteStream {
 	s.byteStreamC.L.Lock()
 	bs, ok := s.byteStreams[referenceId]
 	if !ok {
@@ -99,31 +108,27 @@ func (s *Session) GetByteStream(referenceId libchan.ReferenceId) *libchan.ByteSt
 	return bs
 }
 
-func (s *Session) Dial(referenceId libchan.ReferenceId) (*libchan.ByteStream, error) {
+func (s *Session) Dial(referenceId uint64) (*byteStream, error) {
 	headers := http.Header{}
-	headers.Set("libchan-ref", strconv.FormatUint(uint64(referenceId), 10))
+	headers.Set("libchan-ref", strconv.FormatUint(referenceId, 10))
 	stream, streamErr := s.conn.CreateStream(headers, nil, false)
 	if streamErr != nil {
 		return nil, streamErr
 	}
-	bs := &libchan.ByteStream{
+	bs := &byteStream{
 		ReferenceId: referenceId,
 		Stream:      stream,
 	}
 	return bs, nil
 }
 
-func (s *Session) CreateByteStream(provider libchan.ByteStreamDialer) (*libchan.ByteStream, error) {
+func (s *Session) CreateByteStream() (io.ReadWriteCloser, error) {
 	s.referenceLock.Lock()
 	referenceId := s.referenceCounter
 	s.referenceCounter = referenceId + 2
 	s.referenceLock.Unlock()
 
-	if provider == nil {
-		provider = s
-	}
-
-	byteStream, bsErr := provider.Dial(referenceId)
+	byteStream, bsErr := s.Dial(referenceId)
 	if bsErr != nil {
 		return nil, bsErr
 	}
@@ -136,20 +141,41 @@ func (s *Session) CreateByteStream(provider libchan.ByteStreamDialer) (*libchan.
 	return byteStream, nil
 }
 
-func (s *Session) RegisterListener(listener libchan.ByteStreamListener) {
+func addrKey(local, remote string) string {
+	b := make([]byte, len(local)+len(remote)+2)
+	copy(b, local)
+	copy(b[len(local):], "<>")
+	copy(b[len(local)+2:], remote)
+	return string(b)
+}
+
+func (s *Session) RegisterConn(conn net.Conn) error {
+	s.netConnC.L.Lock()
+	defer s.netConnC.L.Unlock()
+	networkType, ok := s.networks[conn.LocalAddr().Network()]
+	if !ok {
+		return errors.New("unknown network")
+	}
+	networks := s.netConns[networkType]
+	networks[addrKey(conn.LocalAddr().String(), conn.RemoteAddr().String())] = conn
+	s.netConnC.Broadcast()
+
+	return nil
+}
+
+func (s *Session) RegisterListener(listener net.Listener) {
 	go func() {
 		for {
-			byteStream, err := listener.Accept()
+			conn, err := listener.Accept()
 			if err != nil {
 				// Log
 				continue
 			}
-			referenceId := byteStream.ReferenceId
-
-			s.byteStreamC.L.Lock()
-			s.byteStreams[referenceId] = byteStream
-			s.byteStreamC.Broadcast()
-			s.byteStreamC.L.Unlock()
+			err = s.RegisterConn(conn)
+			if err != nil {
+				// Log use of unsupported network
+				break
+			}
 		}
 	}()
 }
@@ -194,15 +220,14 @@ func (c *Channel) CreateSubChannel(direction libchan.Direction) (libchan.Channel
 	}, nil
 }
 
-func (c *Channel) CreateByteStream(provider libchan.ByteStreamDialer) (*libchan.ByteStream, error) {
-	return c.session.CreateByteStream(provider)
+func (c *Channel) CreateByteStream() (io.ReadWriteCloser, error) {
+	return c.session.CreateByteStream()
 }
 
 func (c *Channel) Communicate(message interface{}) error {
 	if c.direction == libchan.Out {
-		handler := getMsgPackHandler(c.session)
 		var buf []byte
-		encoder := codec.NewEncoderBytes(&buf, handler)
+		encoder := codec.NewEncoderBytes(&buf, c.session.handler)
 		encodeErr := encoder.Encode(message)
 		if encodeErr != nil {
 			return encodeErr
@@ -220,8 +245,7 @@ func (c *Channel) Communicate(message interface{}) error {
 			}
 			return readErr
 		}
-		handler := getMsgPackHandler(c.session)
-		decoder := codec.NewDecoderBytes(buf, handler)
+		decoder := codec.NewDecoderBytes(buf, c.session.handler)
 		decodeErr := decoder.Decode(message)
 		if decodeErr != nil {
 			return decodeErr
@@ -239,4 +263,30 @@ func (c *Channel) Close() error {
 
 func (c *Channel) Direction() libchan.Direction {
 	return c.direction
+}
+
+type byteStream struct {
+	Stream      io.ReadWriteCloser
+	ReferenceId uint64
+}
+
+func (b *byteStream) Read(p []byte) (n int, err error) {
+	if b == nil || b.Stream == nil {
+		return 0, errors.New("Byte stream is nil")
+	}
+	return b.Stream.Read(p)
+}
+
+func (b *byteStream) Write(data []byte) (n int, err error) {
+	if b == nil || b.Stream == nil {
+		return 0, errors.New("Byte stream is nil")
+	}
+	return b.Stream.Write(data)
+}
+
+func (b *byteStream) Close() error {
+	if b == nil || b.Stream == nil {
+		return errors.New("Byte stream is nil")
+	}
+	return b.Stream.Close()
 }

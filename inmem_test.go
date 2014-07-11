@@ -215,7 +215,7 @@ func TestComplexMessage(t *testing.T) {
 		if rErr != nil {
 			t.Fatalf("Error creating receiver: %s", rErr)
 		}
-		bs, bsErr := c.CreateByteStream(nil)
+		bs, bsErr := c.CreateByteStream()
 		if bsErr != nil {
 			t.Fatalf("Error creating bytestream: %s", bsErr)
 		}
