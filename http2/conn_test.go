@@ -25,7 +25,7 @@ type RecvMultiMessage struct {
 
 func TestMultiTcpByteStream(t *testing.T) {
 	wait := make(chan bool)
-	client := func(t *testing.T, sender libchan.Channel, s *Session) {
+	client := func(t *testing.T, sender libchan.ChannelSender, s *Session) {
 		<-wait
 		both, connErr := net.Dial("tcp", "localhost:9272")
 		if connErr != nil {
@@ -49,7 +49,7 @@ func TestMultiTcpByteStream(t *testing.T) {
 			Stdout:  in,
 		}
 
-		sendErr := sender.Communicate(m1)
+		sendErr := sender.Send(m1)
 		if sendErr != nil {
 			t.Fatalf("Error sending channel: %s", sendErr)
 		}
@@ -97,7 +97,7 @@ func TestMultiTcpByteStream(t *testing.T) {
 		in.Close()
 		out.Close()
 	}
-	server := func(t *testing.T, receiver libchan.Channel, s *Session) {
+	server := func(t *testing.T, receiver libchan.ChannelReceiver, s *Session) {
 		listener, listenerErr := net.Listen("tcp", "localhost:9272")
 		if listenerErr != nil {
 			t.Fatalf("Error creating byte stream listener: %s", listenerErr)
@@ -106,7 +106,7 @@ func TestMultiTcpByteStream(t *testing.T) {
 		close(wait)
 
 		m1 := &RecvMultiMessage{}
-		recvErr := receiver.Communicate(m1)
+		recvErr := receiver.Receive(m1)
 		if recvErr != nil {
 			t.Fatalf("Error receiving message: %s", recvErr)
 		}

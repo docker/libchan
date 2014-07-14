@@ -13,6 +13,13 @@ import (
 	"github.com/ugorji/go/codec"
 )
 
+type Direction uint8
+
+const (
+	Out = Direction(0x01)
+	In  = Direction(0x02)
+)
+
 type Session struct {
 	conn    *spdystream.Connection
 	handler codec.Handle
@@ -32,11 +39,15 @@ type Session struct {
 type Channel struct {
 	stream    *spdystream.Stream
 	session   *Session
-	direction libchan.Direction
+	direction Direction
 }
 
 func NewClientSession(conn net.Conn) (*Session, error) {
 	return newSession(conn, false)
+}
+
+func NewServerSession(conn net.Conn) (*Session, error) {
+	return newSession(conn, true)
 }
 
 func newSession(conn net.Conn, server bool) (*Session, error) {
@@ -189,7 +200,7 @@ func (s *Session) NewSendChannel() (*Channel, error) {
 	if streamErr != nil {
 		return nil, streamErr
 	}
-	return &Channel{stream: stream, session: s, direction: libchan.Out}, nil
+	return &Channel{stream: stream, session: s, direction: Out}, nil
 }
 
 func (s *Session) WaitReceiveChannel() (*Channel, error) {
@@ -201,67 +212,90 @@ func (s *Session) WaitReceiveChannel() (*Channel, error) {
 	return &Channel{
 		stream:    stream,
 		session:   s,
-		direction: libchan.In,
+		direction: In,
 	}, nil
 }
 
-func (c *Channel) CreateSubChannel(direction libchan.Direction) (libchan.Channel, error) {
-	if c.direction == libchan.In {
-		return nil, errors.New("Cannot create sub channel of an input channel")
+func (c *Channel) createSubChannel(direction Direction) (libchan.ChannelSender, libchan.ChannelReceiver, error) {
+	if c.direction == In {
+		return nil, nil, errors.New("Cannot create sub channel of an input channel")
 	}
 	stream, streamErr := c.stream.CreateSubStream(http.Header{}, false)
 	if streamErr != nil {
-		return nil, streamErr
+		return nil, nil, streamErr
 	}
-	return &Channel{
+	channel := &Channel{
 		stream:    stream,
 		session:   c.session,
 		direction: direction,
-	}, nil
+	}
+	return channel, channel, nil
 }
 
 func (c *Channel) CreateByteStream() (io.ReadWriteCloser, error) {
 	return c.session.CreateByteStream()
 }
 
+func (c *Channel) CreateNestedReceiver() (libchan.ChannelReceiver, libchan.ChannelSender, error) {
+	send, recv, err := c.createSubChannel(In)
+	return recv, send, err
+}
+
+func (c *Channel) CreateNestedSender() (libchan.ChannelSender, libchan.ChannelReceiver, error) {
+	return c.createSubChannel(Out)
+}
+
 func (c *Channel) Communicate(message interface{}) error {
-	if c.direction == libchan.Out {
-		var buf []byte
-		encoder := codec.NewEncoderBytes(&buf, c.session.handler)
-		encodeErr := encoder.Encode(message)
-		if encodeErr != nil {
-			return encodeErr
-		}
-		// TODO check length of buf
-		_, writeErr := c.stream.Write(buf)
-		if writeErr != nil {
-			return writeErr
-		}
-	} else if c.direction == libchan.In {
-		buf, readErr := c.stream.ReadData()
-		if readErr != nil {
-			if readErr == io.EOF {
-				c.stream.Close()
-			}
-			return readErr
-		}
-		decoder := codec.NewDecoderBytes(buf, c.session.handler)
-		decodeErr := decoder.Decode(message)
-		if decodeErr != nil {
-			return decodeErr
-		}
-	} else {
-		return errors.New("Invalid direction")
+	if c.direction == Out {
+		return c.Send(message)
+	} else if c.direction == In {
+		return c.Receive(message)
+	}
+	return errors.New("Invalid direction")
+}
+
+func (c *Channel) Send(message interface{}) error {
+	if c.direction == In {
+		return libchan.ErrWrongDirection
+	}
+	var buf []byte
+	encoder := codec.NewEncoderBytes(&buf, c.session.handler)
+	encodeErr := encoder.Encode(message)
+	if encodeErr != nil {
+		return encodeErr
+	}
+	// TODO check length of buf
+	_, writeErr := c.stream.Write(buf)
+	if writeErr != nil {
+		return writeErr
 	}
 	return nil
+}
 
+func (c *Channel) Receive(message interface{}) error {
+	if c.direction == Out {
+		return libchan.ErrWrongDirection
+	}
+	buf, readErr := c.stream.ReadData()
+	if readErr != nil {
+		if readErr == io.EOF {
+			c.stream.Close()
+		}
+		return readErr
+	}
+	decoder := codec.NewDecoderBytes(buf, c.session.handler)
+	decodeErr := decoder.Decode(message)
+	if decodeErr != nil {
+		return decodeErr
+	}
+	return nil
 }
 
 func (c *Channel) Close() error {
 	return c.stream.Close()
 }
 
-func (c *Channel) Direction() libchan.Direction {
+func (c *Channel) Direction() Direction {
 	return c.direction
 }
 

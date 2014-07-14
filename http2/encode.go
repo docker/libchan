@@ -7,8 +7,6 @@ import (
 	"net"
 	"reflect"
 	"time"
-
-	"github.com/docker/libchan"
 )
 
 func (s *Session) encodeChannel(v reflect.Value) ([]byte, error) {
@@ -23,9 +21,9 @@ func (s *Session) encodeChannel(v reflect.Value) ([]byte, error) {
 	// Get stream identifier?
 	streamId := rc.stream.Identifier()
 	var buf [9]byte
-	if rc.direction == libchan.In {
+	if rc.direction == In {
 		buf[0] = 0x02 // Reverse direction
-	} else if rc.direction == libchan.Out {
+	} else if rc.direction == Out {
 		buf[0] = 0x01 // Reverse direction
 	} else {
 		return nil, errors.New("Invalid direction")
@@ -41,9 +39,9 @@ func (s *Session) decodeChannel(v reflect.Value, b []byte) error {
 	rc := v.Interface().(Channel)
 
 	if b[0] == 0x01 {
-		rc.direction = libchan.In
+		rc.direction = In
 	} else if b[0] == 0x02 {
-		rc.direction = libchan.Out
+		rc.direction = Out
 	} else {
 		return errors.New("unexpected direction")
 	}

@@ -13,8 +13,8 @@ import (
 
 type InOutMessage struct {
 	Message string
-	Recv    libchan.Channel
-	Send    libchan.Channel
+	Recv    libchan.ChannelReceiver
+	Send    libchan.ChannelSender
 }
 
 type SimpleMessage struct {
@@ -22,35 +22,35 @@ type SimpleMessage struct {
 }
 
 func TestChannelEncoding(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Channel, s *Session) {
-		recv, err1 := sender.CreateSubChannel(libchan.In)
+	client := func(t *testing.T, sender libchan.ChannelSender, s *Session) {
+		recv, s1, err1 := sender.CreateNestedReceiver()
 		if err1 != nil {
 			t.Fatalf("Error creating receive channel: %s", err1)
 		}
 
-		send, err2 := sender.CreateSubChannel(libchan.Out)
+		send, r1, err2 := sender.CreateNestedSender()
 		if err2 != nil {
 			t.Fatalf("Error creating send channel: %s", err2)
 		}
 
 		m1 := &InOutMessage{
 			Message: "WithInOut",
-			Recv:    send,
-			Send:    recv,
+			Recv:    r1,
+			Send:    s1,
 		}
-		sendErr := sender.Communicate(m1)
+		sendErr := sender.Send(m1)
 		if sendErr != nil {
 			t.Fatalf("Error sending InOutMessage: %s", sendErr)
 		}
 
 		m2 := &SimpleMessage{"This is a simple message"}
-		sendErr = send.Communicate(m2)
+		sendErr = send.Send(m2)
 		if sendErr != nil {
 			t.Fatalf("Error sending simple message: %s", sendErr)
 		}
 
 		m3 := &SimpleMessage{}
-		recvErr := recv.Communicate(m3)
+		recvErr := recv.Receive(m3)
 		if recvErr != nil {
 			t.Fatalf("Error receiving simple message: %s", recvErr)
 		}
@@ -68,9 +68,9 @@ func TestChannelEncoding(t *testing.T) {
 			t.Fatalf("Error closing s1: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.Channel, s *Session) {
+	server := func(t *testing.T, receiver libchan.ChannelReceiver, s *Session) {
 		m1 := &InOutMessage{}
-		receiveErr := receiver.Communicate(m1)
+		receiveErr := receiver.Receive(m1)
 		if receiveErr != nil {
 			t.Fatalf("Error receiving InOutMessage: %s", receiveErr)
 		}
@@ -88,7 +88,7 @@ func TestChannelEncoding(t *testing.T) {
 		}
 
 		m2 := &SimpleMessage{}
-		receiveErr = m1.Recv.Communicate(m2)
+		receiveErr = m1.Recv.Receive(m2)
 		if receiveErr != nil {
 			t.Fatalf("Error receiving SimpleMessage: %s", receiveErr)
 		}
@@ -97,7 +97,7 @@ func TestChannelEncoding(t *testing.T) {
 		}
 
 		m3 := &SimpleMessage{"This is a responding simple message"}
-		sendErr := m1.Send.Communicate(m3)
+		sendErr := m1.Send.Send(m3)
 		if sendErr != nil {
 			t.Fatalf("Error sending SimpleMessage: %s", sendErr)
 		}
@@ -115,41 +115,36 @@ func TestChannelEncoding(t *testing.T) {
 	SpawnClientServerTest(t, "localhost:12843", ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
-type ChannelAbstraction interface {
-	Communicate(interface{}) error
-	Close() error
-}
-
 type AbstractionMessage struct {
 	Message string
-	Channel ChannelAbstraction
+	Channel interface{}
 }
 
 func TestChannelAbstraction(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Channel, s *Session) {
-		channel, channelErr := sender.CreateSubChannel(libchan.Out)
+	client := func(t *testing.T, sender libchan.ChannelSender, s *Session) {
+		send, recv, channelErr := sender.CreateNestedSender()
 		if channelErr != nil {
 			t.Fatalf("Error creating sub channel: %s", channelErr)
 		}
 
 		m1 := &AbstractionMessage{
 			Message: "irrelevant content",
-			Channel: channel,
+			Channel: recv,
 		}
 
-		sendErr := sender.Communicate(m1)
+		sendErr := sender.Send(m1)
 		if sendErr != nil {
 			t.Fatalf("Error sending channel: %s", sendErr)
 		}
 
-		closeErr := channel.Close()
+		closeErr := send.Close()
 		if closeErr != nil {
 			t.Fatalf("Error closing sender: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.Channel, s *Session) {
-		m1 := &AbstractionMessage{Channel: &Channel{}}
-		recvErr := receiver.Communicate(m1)
+	server := func(t *testing.T, receiver libchan.ChannelReceiver, s *Session) {
+		m1 := &AbstractionMessage{}
+		recvErr := receiver.Receive(m1)
 		if recvErr != nil {
 			t.Fatalf("Error receiving message: %s", recvErr)
 		}
@@ -158,7 +153,7 @@ func TestChannelAbstraction(t *testing.T) {
 			t.Fatalf("Unexpected message value:\n\tExpected: %s\n\tActual: %s", expected, m1.Message)
 		}
 
-		closeErr := m1.Channel.Close()
+		closeErr := m1.Channel.(libchan.ChannelReceiver).Close()
 		if closeErr != nil {
 			t.Fatalf("Error closing channel: %s", closeErr)
 		}
@@ -168,55 +163,44 @@ func TestChannelAbstraction(t *testing.T) {
 
 type MessageWithInput struct {
 	Message string
-	Input   libchan.Channel
+	Input   libchan.ChannelReceiver
 }
 
 func TestBadDirection(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Channel, s *Session) {
-		channel, channelErr := sender.CreateSubChannel(libchan.In)
+	client := func(t *testing.T, sender libchan.ChannelSender, s *Session) {
+		send, recv, channelErr := sender.CreateNestedSender()
 		if channelErr != nil {
 			t.Fatalf("Error creating sub channel: %s", channelErr)
 		}
 
 		m1 := &MessageWithInput{
 			Message: "contentless",
-			Input:   channel,
+			Input:   recv,
 		}
 
-		sendErr := sender.Communicate(m1)
+		sendErr := sender.Send(m1)
 		if sendErr != nil {
 			t.Fatalf("Error sending channel: %s", sendErr)
 		}
 
 		m2 := &SimpleMessage{"Supposedly input"}
-		commErr := channel.Communicate(m2)
-		if commErr != nil {
-			t.Fatalf("Error receiving message")
+		commErr := recv.Receive(m2)
+		if commErr == nil {
+			t.Fatalf("No error receiving on sender")
+		} else if commErr != libchan.ErrWrongDirection {
+			t.Fatalf("Error receiving message: %s", commErr)
 		}
 
-		if len(m2.Message) != 0 {
-			t.Fatalf("Expected m2's value to be cleared after communicate")
-		}
-
-		closeErr := channel.Close()
+		closeErr := send.Close()
 		if closeErr != nil {
 			t.Fatalf("Error closing sender: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.Channel, s *Session) {
+	server := func(t *testing.T, receiver libchan.ChannelReceiver, s *Session) {
 		m1 := &MessageWithInput{}
-		recvErr := receiver.Communicate(m1)
+		recvErr := receiver.Receive(m1)
 		if recvErr != nil {
 			t.Fatalf("Error receiving message: %s", recvErr)
-		}
-
-		m2 := &SimpleMessage{}
-		commErr := m1.Input.Communicate(m2)
-		if commErr != nil {
-			t.Fatalf("Error receiving message")
-		}
-		if len(m2.Message) != 0 {
-			t.Fatalf("Expected m2's value to remain empty after communicate")
 		}
 
 		closeErr := m1.Input.Close()
@@ -233,7 +217,7 @@ type MessageWithByteStream struct {
 }
 
 func TestByteStream(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Channel, s *Session) {
+	client := func(t *testing.T, sender libchan.ChannelSender, s *Session) {
 		bs, bsErr := sender.CreateByteStream()
 		if bsErr != nil {
 			t.Fatalf("Error creating byte stream: %s", bsErr)
@@ -249,7 +233,7 @@ func TestByteStream(t *testing.T) {
 			t.Fatalf("Error writing to byte stream: %s", writeErr)
 		}
 
-		sendErr := sender.Communicate(m1)
+		sendErr := sender.Send(m1)
 		if sendErr != nil {
 			t.Fatalf("Error sending channel: %s", sendErr)
 		}
@@ -269,9 +253,9 @@ func TestByteStream(t *testing.T) {
 		}
 
 	}
-	server := func(t *testing.T, receiver libchan.Channel, s *Session) {
+	server := func(t *testing.T, receiver libchan.ChannelReceiver, s *Session) {
 		m1 := &MessageWithByteStream{}
-		recvErr := receiver.Communicate(m1)
+		recvErr := receiver.Receive(m1)
 		if recvErr != nil {
 			t.Fatalf("Error receiving message: %s", recvErr)
 		}
@@ -305,10 +289,10 @@ func TestByteStream(t *testing.T) {
 			t.Fatalf("Error closing byte stream: %s", closeErr)
 		}
 	}
-	SpawnClientServerTest(t, "localhost:12943", ClientSendWrapper(client), ServerReceiveWrapper(server))
+	SpawnClientServerTest(t, "localhost:12944", ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
-func ClientSendWrapper(f func(t *testing.T, c libchan.Channel, s *Session)) ClientRoutine {
+func ClientSendWrapper(f func(t *testing.T, c libchan.ChannelSender, s *Session)) ClientRoutine {
 	return func(t *testing.T, server string) {
 		conn, connErr := net.Dial("tcp", server)
 		if connErr != nil {
@@ -339,7 +323,7 @@ func ClientSendWrapper(f func(t *testing.T, c libchan.Channel, s *Session)) Clie
 	}
 }
 
-func ServerReceiveWrapper(f func(t *testing.T, c libchan.Channel, s *Session)) ServerRoutine {
+func ServerReceiveWrapper(f func(t *testing.T, c libchan.ChannelReceiver, s *Session)) ServerRoutine {
 	return func(t *testing.T, listener net.Listener) {
 		conn, connErr := listener.Accept()
 		if connErr != nil {
