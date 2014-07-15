@@ -1,8 +1,8 @@
-// Package http2 provides a libchan implementation using
-// spdy based http2 draft.  This package does not explicitly
+// Package spdy provides a libchan implementation using
+// spdy 3.  This package does not explicitly
 // provide or enforce tls security, but allows being used with
 // secured connections.
-package http2
+package spdy
 
 import (
 	"net"
