@@ -1,28 +1,56 @@
 package libchan
 
 import (
-	"errors"
 	"io"
 	"net"
 )
 
-var (
-	ErrWrongDirection = errors.New("wrong channel direction")
-)
-
+// Transport represents a connection which can multiplex channels and
+// bytestreams.
 type Transport interface {
+	// NewSendChannel creates and returns a new send channel.  The receive
+	// end will get picked up on the remote end of the transport through
+	// the remote calling WaitReceiveChannel.
 	NewSendChannel() (ChannelSender, error)
+
+	// WaitReceiveChannel waits for a new channel be created by the
+	// remote end of the transport calling NewSendChannel.
 	WaitReceiveChannel() (ChannelReceiver, error)
 
+	// RegisterConn registers a network connection to be used
+	// by inbound messages referring to the connection
+	// with the registered connection's local and remote address.
+	// Note: a connection does not need to be registered before
+	// being sent in a message, but does need to be registered
+	// to by the receiver of a message. If registration should be
+	// automatic, register a listener instead.
 	RegisterConn(net.Conn) error
+
+	// RegisterListener accepts all connections from the listener
+	// and immediately registers them.
 	RegisterListener(net.Listener)
+
+	// Unregister removes the connection from the list of known
+	// connections. This should be called when a connection is
+	// closed and no longer expected in inbound messages.
+	// Failure to unregister connections will increase memory
+	// usage since the transport is not notified of closed
+	// connections to automatically unregister.
 	Unregister(net.Conn)
 }
 
+// ChannelSender is a channel which sent messages of any content
+// including other channels and bytestreams.
 type ChannelSender interface {
+	// Send sends a message across the channel to a receiver on the
+	// other side of the underlying transport.
 	Send(message interface{}) error
+
+	// Close closes the channel.
 	Close() error
 
+	// CreateByteStream creates a new byte stream using the
+	// default byte stream type of the underlying transport.
 	CreateByteStream() (io.ReadWriteCloser, error)
 
 	// CreatePipeReceiver creates a receive-only pipe.  The sender
@@ -36,57 +64,21 @@ type ChannelSender interface {
 	CreateNestedSender() (ChannelSender, ChannelReceiver, error)
 }
 
+// ChannelReceiver is a channel which can receive messages of any
+// content including other channels and bytestreams.
 type ChannelReceiver interface {
+	// Receive receives a message sent across the channel from
+	// a sender on the other side of the underlying transport.
+	// Receive is expected to receive the same object that was
+	// sent by the ChannelSender, any differences between the
+	// receive and send type should be handled carefully.  It is
+	// up to the application to determine type compatibility, if
+	// the receive object is incompatible, ChannelReceiver will
+	// throw an error.
 	Receive(message interface{}) error
+
+	// Close closes the channel.  Closing does not keep the remote
+	// sender from sending messages.  Normally a receiver can be
+	// automatically closed through receiving an EOF.
 	Close() error
-}
-
-type Sender interface {
-	Send(msg *Message) (Receiver, error)
-	Close() error
-}
-
-type Receiver interface {
-	Receive(mode int) (*Message, error)
-}
-
-type Message struct {
-	Data   []byte
-	Stream io.ReadWriteCloser
-	Ret    Sender
-}
-
-const (
-	Ret int = 1 << iota
-	// FIXME: use an `Att` flag to auto-close attachments by default
-)
-
-type ReceiverFrom interface {
-	ReceiveFrom(Receiver) (int, error)
-}
-
-type SenderTo interface {
-	SendTo(Sender) (int, error)
-}
-
-var (
-	ErrIncompatibleSender   = errors.New("incompatible sender")
-	ErrIncompatibleReceiver = errors.New("incompatible receiver")
-)
-
-// RetPipe is a special value for `Message.Ret`.
-// When a Message is sent with `Ret=SendPipe`, the transport must
-// substitute it with the writing end of a new pipe, and return the
-// other end as a return value.
-type retPipe struct {
-	NopSender
-}
-
-var RetPipe = retPipe{}
-
-func (r retPipe) Equals(val Sender) bool {
-	if rval, ok := val.(retPipe); ok {
-		return rval == r
-	}
-	return false
 }
