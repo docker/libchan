@@ -206,6 +206,7 @@ func (s *Session) decodeNetConn(v reflect.Value, b []byte) error {
 
 func (s *Session) initializeHandler() *codec.MsgpackHandle {
 	mh := &codec.MsgpackHandle{WriteExt: true}
+	mh.RawToString = true
 	err := mh.AddExt(reflect.TypeOf(Channel{}), 0x01, s.encodeChannel, s.decodeChannel)
 	if err != nil {
 		panic(err)
