@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-func (s *Session) encodeChannel(v reflect.Value) ([]byte, error) {
-	rc := v.Interface().(Channel)
+func (s *session) encodeChannel(v reflect.Value) ([]byte, error) {
+	rc := v.Interface().(channel)
 	if rc.stream == nil {
 		return nil, errors.New("bad type")
 	}
@@ -21,9 +21,9 @@ func (s *Session) encodeChannel(v reflect.Value) ([]byte, error) {
 	// Get stream identifier?
 	streamId := rc.stream.Identifier()
 	var buf [9]byte
-	if rc.direction == In {
+	if rc.direction == inbound {
 		buf[0] = 0x02 // Reverse direction
-	} else if rc.direction == Out {
+	} else if rc.direction == outbound {
 		buf[0] = 0x01 // Reverse direction
 	} else {
 		return nil, errors.New("Invalid direction")
@@ -35,13 +35,13 @@ func (s *Session) encodeChannel(v reflect.Value) ([]byte, error) {
 	return buf[:(written + 1)], nil
 }
 
-func (s *Session) decodeChannel(v reflect.Value, b []byte) error {
-	rc := v.Interface().(Channel)
+func (s *session) decodeChannel(v reflect.Value, b []byte) error {
+	rc := v.Interface().(channel)
 
 	if b[0] == 0x01 {
-		rc.direction = In
+		rc.direction = inbound
 	} else if b[0] == 0x02 {
-		rc.direction = Out
+		rc.direction = outbound
 	} else {
 		return errors.New("unexpected direction")
 	}
@@ -61,7 +61,7 @@ func (s *Session) decodeChannel(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *Session) encodeStream(v reflect.Value) ([]byte, error) {
+func (s *session) encodeStream(v reflect.Value) ([]byte, error) {
 	bs := v.Interface().(byteStream)
 	if bs.ReferenceId == 0 {
 		return nil, errors.New("bad type")
@@ -72,13 +72,13 @@ func (s *Session) encodeStream(v reflect.Value) ([]byte, error) {
 	return buf[:written], nil
 }
 
-func (s *Session) decodeStream(v reflect.Value, b []byte) error {
+func (s *session) decodeStream(v reflect.Value, b []byte) error {
 	referenceId, readN := binary.Uvarint(b)
 	if readN == 0 {
 		return errors.New("bad reference id")
 	}
 
-	bs := s.GetByteStream(referenceId)
+	bs := s.getByteStream(referenceId)
 	if bs != nil {
 		v.Set(reflect.ValueOf(*bs))
 	}
@@ -86,7 +86,7 @@ func (s *Session) decodeStream(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *Session) waitConn(network, local, remote string, timeout time.Duration) (net.Conn, error) {
+func (s *session) waitConn(network, local, remote string, timeout time.Duration) (net.Conn, error) {
 	timeoutChan := time.After(timeout)
 	connChan := make(chan net.Conn)
 
@@ -172,7 +172,7 @@ func decodeString3(b []byte) (string, string, string, error) {
 	return s1, s2, s3, nil
 }
 
-func (s *Session) encodeNetConn(v reflect.Value) ([]byte, error) {
+func (s *session) encodeNetConn(v reflect.Value) ([]byte, error) {
 	var conn net.Conn
 	switch t := v.Interface().(type) {
 	case net.TCPConn:
@@ -189,7 +189,7 @@ func (s *Session) encodeNetConn(v reflect.Value) ([]byte, error) {
 	return encodeString3(conn.LocalAddr().Network(), conn.RemoteAddr().String(), conn.LocalAddr().String())
 }
 
-func (s *Session) decodeNetConn(v reflect.Value, b []byte) error {
+func (s *session) decodeNetConn(v reflect.Value, b []byte) error {
 	network, local, remote, err := decodeString3(b)
 	if err != nil {
 		return err
@@ -204,10 +204,10 @@ func (s *Session) decodeNetConn(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *Session) initializeHandler() *codec.MsgpackHandle {
+func (s *session) initializeHandler() *codec.MsgpackHandle {
 	mh := &codec.MsgpackHandle{WriteExt: true}
 	mh.RawToString = true
-	err := mh.AddExt(reflect.TypeOf(Channel{}), 0x01, s.encodeChannel, s.decodeChannel)
+	err := mh.AddExt(reflect.TypeOf(channel{}), 0x01, s.encodeChannel, s.decodeChannel)
 	if err != nil {
 		panic(err)
 	}

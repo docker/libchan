@@ -8,16 +8,16 @@ import (
 )
 
 type pipeSender struct {
-	session *Session
+	session *session
 	sender  libchan.ChannelSender
 }
 
 type pipeReceiver struct {
-	session  *Session
+	session  *session
 	receiver libchan.ChannelReceiver
 }
 
-// Pipe creates a channel pipe using a unix socket
+// Pipe creates a channel pipe using an in memory transport.
 func Pipe() (libchan.ChannelSender, libchan.ChannelReceiver, error) {
 	c1, c2 := net.Pipe()
 

@@ -1,6 +1,10 @@
 package http2
 
-import "net"
+import (
+	"net"
+
+	"github.com/docker/libchan"
+)
 
 // SessionListener is a listener which accepts new
 // connections angi rd spawns spdy sessions.
@@ -29,7 +33,7 @@ func (l *SessionListener) Close() error {
 // AcceptSessions waits for a new network connections
 // and creates a new stream.  Connections which fail
 // authentication will not be returned.
-func (l *SessionListener) AcceptSession() (*Session, error) {
+func (l *SessionListener) AcceptSession() (libchan.Transport, error) {
 	for {
 		conn, err := l.listener.Accept()
 		if err != nil {

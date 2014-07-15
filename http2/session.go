@@ -13,14 +13,16 @@ import (
 	"github.com/ugorji/go/codec"
 )
 
-type Direction uint8
+type direction uint8
 
 const (
-	Out = Direction(0x01)
-	In  = Direction(0x02)
+	outbound = direction(0x01)
+	inbound  = direction(0x02)
 )
 
-type Session struct {
+// session is a transport session on top of a network
+// connection using spdy.
+type session struct {
 	conn    *spdystream.Connection
 	handler codec.Handle
 
@@ -36,28 +38,34 @@ type Session struct {
 	networks map[string]byte
 }
 
-type Channel struct {
+type channel struct {
 	stream    *spdystream.Stream
-	session   *Session
-	direction Direction
+	session   *session
+	direction direction
 }
 
-func NewClientSession(conn net.Conn) (*Session, error) {
+// NewClientSession creates a new stream session from the
+// provided network connection. The network connection is
+// expected to already provide a tls session.
+func NewClientSession(conn net.Conn) (libchan.Transport, error) {
 	return newSession(conn, false)
 }
 
-func NewServerSession(conn net.Conn) (*Session, error) {
+// NewServerSession creates a new stream session from the
+// provided network connection. The network connection is
+// expected to already have completed the tls handshake.
+func NewServerSession(conn net.Conn) (libchan.Transport, error) {
 	return newSession(conn, true)
 }
 
-func newSession(conn net.Conn, server bool) (*Session, error) {
+func newSession(conn net.Conn, server bool) (*session, error) {
 	var referenceCounter uint64
 	if server {
 		referenceCounter = 2
 	} else {
 		referenceCounter = 1
 	}
-	session := &Session{
+	session := &session{
 		streamChan:       make(chan *spdystream.Stream),
 		referenceCounter: referenceCounter,
 		byteStreamC:      sync.NewCond(new(sync.Mutex)),
@@ -79,7 +87,7 @@ func newSession(conn net.Conn, server bool) (*Session, error) {
 	return session, nil
 }
 
-func (s *Session) newStreamHandler(stream *spdystream.Stream) {
+func (s *session) newStreamHandler(stream *spdystream.Stream) {
 	referenceIdString := stream.Headers().Get("libchan-ref")
 
 	returnHeaders := http.Header{}
@@ -108,7 +116,7 @@ func (s *Session) newStreamHandler(stream *spdystream.Stream) {
 	stream.SendReply(returnHeaders, finish)
 }
 
-func (s *Session) GetByteStream(referenceId uint64) *byteStream {
+func (s *session) getByteStream(referenceId uint64) *byteStream {
 	s.byteStreamC.L.Lock()
 	bs, ok := s.byteStreams[referenceId]
 	if !ok {
@@ -119,7 +127,7 @@ func (s *Session) GetByteStream(referenceId uint64) *byteStream {
 	return bs
 }
 
-func (s *Session) Dial(referenceId uint64) (*byteStream, error) {
+func (s *session) dial(referenceId uint64) (*byteStream, error) {
 	headers := http.Header{}
 	headers.Set("libchan-ref", strconv.FormatUint(referenceId, 10))
 	stream, streamErr := s.conn.CreateStream(headers, nil, false)
@@ -133,13 +141,13 @@ func (s *Session) Dial(referenceId uint64) (*byteStream, error) {
 	return bs, nil
 }
 
-func (s *Session) CreateByteStream() (io.ReadWriteCloser, error) {
+func (s *session) createByteStream() (io.ReadWriteCloser, error) {
 	s.referenceLock.Lock()
 	referenceId := s.referenceCounter
 	s.referenceCounter = referenceId + 2
 	s.referenceLock.Unlock()
 
-	byteStream, bsErr := s.Dial(referenceId)
+	byteStream, bsErr := s.dial(referenceId)
 	if bsErr != nil {
 		return nil, bsErr
 	}
@@ -160,7 +168,7 @@ func addrKey(local, remote string) string {
 	return string(b)
 }
 
-func (s *Session) RegisterConn(conn net.Conn) error {
+func (s *session) RegisterConn(conn net.Conn) error {
 	s.netConnC.L.Lock()
 	defer s.netConnC.L.Unlock()
 	networkType, ok := s.networks[conn.LocalAddr().Network()]
@@ -174,7 +182,7 @@ func (s *Session) RegisterConn(conn net.Conn) error {
 	return nil
 }
 
-func (s *Session) RegisterListener(listener net.Listener) {
+func (s *session) RegisterListener(listener net.Listener) {
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -191,40 +199,49 @@ func (s *Session) RegisterListener(listener net.Listener) {
 	}()
 }
 
-func (s *Session) Close() error {
+func (s *session) Unregister(net.Conn) {
+
+}
+
+func (s *session) Close() error {
 	return s.conn.Close()
 }
 
-func (s *Session) NewSendChannel() (*Channel, error) {
+// NewSendChannel creates and returns a new send channel.  The receive
+// end will get picked up on the remote end through the remote calling
+// WaitReceiveChannel.
+func (s *session) NewSendChannel() (libchan.ChannelSender, error) {
 	stream, streamErr := s.conn.CreateStream(http.Header{}, nil, false)
 	if streamErr != nil {
 		return nil, streamErr
 	}
-	return &Channel{stream: stream, session: s, direction: Out}, nil
+	return &channel{stream: stream, session: s, direction: outbound}, nil
 }
 
-func (s *Session) WaitReceiveChannel() (*Channel, error) {
+// WaitReceiveChannel waits for a new channel be created by a remote
+// call to NewSendChannel.
+func (s *session) WaitReceiveChannel() (libchan.ChannelReceiver, error) {
 	stream, ok := <-s.streamChan
 	if !ok {
 		return nil, io.EOF
 	}
 
-	return &Channel{
+	return &channel{
 		stream:    stream,
 		session:   s,
-		direction: In,
+		direction: inbound,
 	}, nil
 }
 
-func (c *Channel) createSubChannel(direction Direction) (libchan.ChannelSender, libchan.ChannelReceiver, error) {
-	if c.direction == In {
+func (c *channel) createSubChannel(direction direction) (libchan.ChannelSender, libchan.ChannelReceiver, error) {
+	if c.direction == inbound {
 		return nil, nil, errors.New("Cannot create sub channel of an input channel")
 	}
 	stream, streamErr := c.stream.CreateSubStream(http.Header{}, false)
 	if streamErr != nil {
 		return nil, nil, streamErr
 	}
-	channel := &Channel{
+	channel := &channel{
 		stream:    stream,
 		session:   c.session,
 		direction: direction,
@@ -232,30 +249,31 @@ func (c *Channel) createSubChannel(direction Direction) (libchan.ChannelSender, 
 	return channel, channel, nil
 }
 
-func (c *Channel) CreateByteStream() (io.ReadWriteCloser, error) {
-	return c.session.CreateByteStream()
+// CreateByteStream creates a new byte stream using an underlying
+// spdy stream.
+func (c *channel) CreateByteStream() (io.ReadWriteCloser, error) {
+	return c.session.createByteStream()
 }
 
-func (c *Channel) CreateNestedReceiver() (libchan.ChannelReceiver, libchan.ChannelSender, error) {
-	send, recv, err := c.createSubChannel(In)
+// CreateNestedReceiver creates a new channel returning the local
+// receiver and the remote sender.  The remote sender needs to be
+// sent across the channel before being utilized.
+func (c *channel) CreateNestedReceiver() (libchan.ChannelReceiver, libchan.ChannelSender, error) {
+	send, recv, err := c.createSubChannel(inbound)
 	return recv, send, err
 }
 
-func (c *Channel) CreateNestedSender() (libchan.ChannelSender, libchan.ChannelReceiver, error) {
-	return c.createSubChannel(Out)
+// CreateNestedReceiver creates a new channel returning the local
+// sender and the remote receiver.  The remote receiver needs to be
+// sent across the channel before being utilized.
+func (c *channel) CreateNestedSender() (libchan.ChannelSender, libchan.ChannelReceiver, error) {
+	return c.createSubChannel(outbound)
 }
 
-func (c *Channel) Communicate(message interface{}) error {
-	if c.direction == Out {
-		return c.Send(message)
-	} else if c.direction == In {
-		return c.Receive(message)
-	}
-	return errors.New("Invalid direction")
-}
-
-func (c *Channel) Send(message interface{}) error {
-	if c.direction == In {
+// Send sends a message across the channel to a receiver on the
+// other side of the transport.
+func (c *channel) Send(message interface{}) error {
+	if c.direction == inbound {
 		return libchan.ErrWrongDirection
 	}
 	var buf []byte
@@ -264,6 +282,7 @@ func (c *Channel) Send(message interface{}) error {
 	if encodeErr != nil {
 		return encodeErr
 	}
+
 	// TODO check length of buf
 	_, writeErr := c.stream.Write(buf)
 	if writeErr != nil {
@@ -272,8 +291,10 @@ func (c *Channel) Send(message interface{}) error {
 	return nil
 }
 
-func (c *Channel) Receive(message interface{}) error {
-	if c.direction == Out {
+// Receive receives a message sent across the channel from
+// a sender on the other side of the transport.
+func (c *channel) Receive(message interface{}) error {
+	if c.direction == outbound {
 		return libchan.ErrWrongDirection
 	}
 	buf, readErr := c.stream.ReadData()
@@ -291,12 +312,10 @@ func (c *Channel) Receive(message interface{}) error {
 	return nil
 }
 
-func (c *Channel) Close() error {
+// Close closes the underlying stream, causing any subsequent
+// sends to throw an error and receives to return EOF.
+func (c *channel) Close() error {
 	return c.stream.Close()
-}
-
-func (c *Channel) Direction() Direction {
-	return c.direction
 }
 
 type byteStream struct {

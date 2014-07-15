@@ -11,10 +11,10 @@ var (
 )
 
 type Transport interface {
-	NewSendChannel() ChannelSender
-	WaitReceiveChannel() ChannelReceiver
+	NewSendChannel() (ChannelSender, error)
+	WaitReceiveChannel() (ChannelReceiver, error)
 
-	RegisterConn(net.Conn)
+	RegisterConn(net.Conn) error
 	RegisterListener(net.Listener)
 	Unregister(net.Conn)
 }
