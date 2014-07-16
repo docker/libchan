@@ -8,12 +8,12 @@ import (
 )
 
 type pipeSender struct {
-	session *session
+	session *SpdyTransport
 	sender  libchan.Sender
 }
 
 type pipeReceiver struct {
-	session  *session
+	session  *SpdyTransport
 	receiver libchan.Receiver
 }
 

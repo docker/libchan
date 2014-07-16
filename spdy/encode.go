@@ -10,7 +10,7 @@ import (
 	"github.com/dmcgowan/go/codec"
 )
 
-func (s *session) encodeChannel(v reflect.Value) ([]byte, error) {
+func (s *SpdyTransport) encodeChannel(v reflect.Value) ([]byte, error) {
 	rc := v.Interface().(channel)
 	if rc.stream == nil {
 		return nil, errors.New("bad type")
@@ -36,7 +36,7 @@ func (s *session) encodeChannel(v reflect.Value) ([]byte, error) {
 	return buf[:(written + 1)], nil
 }
 
-func (s *session) decodeChannel(v reflect.Value, b []byte) error {
+func (s *SpdyTransport) decodeChannel(v reflect.Value, b []byte) error {
 	rc := v.Interface().(channel)
 
 	if b[0] == 0x01 {
@@ -62,7 +62,7 @@ func (s *session) decodeChannel(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *session) encodeStream(v reflect.Value) ([]byte, error) {
+func (s *SpdyTransport) encodeStream(v reflect.Value) ([]byte, error) {
 	bs := v.Interface().(byteStream)
 	if bs.ReferenceId == 0 {
 		return nil, errors.New("bad type")
@@ -73,7 +73,7 @@ func (s *session) encodeStream(v reflect.Value) ([]byte, error) {
 	return buf[:written], nil
 }
 
-func (s *session) decodeStream(v reflect.Value, b []byte) error {
+func (s *SpdyTransport) decodeStream(v reflect.Value, b []byte) error {
 	referenceId, readN := binary.Uvarint(b)
 	if readN == 0 {
 		return errors.New("bad reference id")
@@ -87,7 +87,7 @@ func (s *session) decodeStream(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *session) waitConn(network, local, remote string, timeout time.Duration) (net.Conn, error) {
+func (s *SpdyTransport) waitConn(network, local, remote string, timeout time.Duration) (net.Conn, error) {
 	timeoutChan := time.After(timeout)
 	connChan := make(chan net.Conn)
 
@@ -173,7 +173,7 @@ func decodeString3(b []byte) (string, string, string, error) {
 	return s1, s2, s3, nil
 }
 
-func (s *session) encodeNetConn(v reflect.Value) ([]byte, error) {
+func (s *SpdyTransport) encodeNetConn(v reflect.Value) ([]byte, error) {
 	var conn net.Conn
 	switch t := v.Interface().(type) {
 	case net.TCPConn:
@@ -190,7 +190,7 @@ func (s *session) encodeNetConn(v reflect.Value) ([]byte, error) {
 	return encodeString3(conn.LocalAddr().Network(), conn.RemoteAddr().String(), conn.LocalAddr().String())
 }
 
-func (s *session) decodeNetConn(v reflect.Value, b []byte) error {
+func (s *SpdyTransport) decodeNetConn(v reflect.Value, b []byte) error {
 	network, local, remote, err := decodeString3(b)
 	if err != nil {
 		return err
@@ -205,7 +205,7 @@ func (s *session) decodeNetConn(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *session) initializeHandler() *codec.MsgpackHandle {
+func (s *SpdyTransport) initializeHandler() *codec.MsgpackHandle {
 	mh := &codec.MsgpackHandle{WriteExt: true}
 	mh.RawToString = true
 	err := mh.AddExt(reflect.TypeOf(channel{}), 0x01, s.encodeChannel, s.decodeChannel)

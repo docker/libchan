@@ -24,9 +24,9 @@ var (
 	ErrWrongDirection = errors.New("Wrong channel direction")
 )
 
-// session is a transport session on top of a network
+// SpdyTransport is a transport session on top of a network
 // connection using spdy.
-type session struct {
+type SpdyTransport struct {
 	conn    *spdystream.Connection
 	handler codec.Handle
 
@@ -44,32 +44,32 @@ type session struct {
 
 type channel struct {
 	stream    *spdystream.Stream
-	session   *session
+	session   *SpdyTransport
 	direction direction
 }
 
-// NewClientSession creates a new stream session from the
+// NewClientTransport creates a new stream transport from the
 // provided network connection. The network connection is
 // expected to already provide a tls session.
-func NewClientSession(conn net.Conn) (libchan.Transport, error) {
+func NewClientTransport(conn net.Conn) (*SpdyTransport, error) {
 	return newSession(conn, false)
 }
 
-// NewServerSession creates a new stream session from the
+// NewServerTransport creates a new stream transport from the
 // provided network connection. The network connection is
 // expected to already have completed the tls handshake.
-func NewServerSession(conn net.Conn) (libchan.Transport, error) {
+func NewServerTransport(conn net.Conn) (*SpdyTransport, error) {
 	return newSession(conn, true)
 }
 
-func newSession(conn net.Conn, server bool) (*session, error) {
+func newSession(conn net.Conn, server bool) (*SpdyTransport, error) {
 	var referenceCounter uint64
 	if server {
 		referenceCounter = 2
 	} else {
 		referenceCounter = 1
 	}
-	session := &session{
+	session := &SpdyTransport{
 		streamChan:       make(chan *spdystream.Stream),
 		referenceCounter: referenceCounter,
 		byteStreamC:      sync.NewCond(new(sync.Mutex)),
@@ -91,7 +91,7 @@ func newSession(conn net.Conn, server bool) (*session, error) {
 	return session, nil
 }
 
-func (s *session) newStreamHandler(stream *spdystream.Stream) {
+func (s *SpdyTransport) newStreamHandler(stream *spdystream.Stream) {
 	referenceIdString := stream.Headers().Get("libchan-ref")
 
 	returnHeaders := http.Header{}
@@ -120,7 +120,7 @@ func (s *session) newStreamHandler(stream *spdystream.Stream) {
 	stream.SendReply(returnHeaders, finish)
 }
 
-func (s *session) getByteStream(referenceId uint64) *byteStream {
+func (s *SpdyTransport) getByteStream(referenceId uint64) *byteStream {
 	s.byteStreamC.L.Lock()
 	bs, ok := s.byteStreams[referenceId]
 	if !ok {
@@ -131,7 +131,7 @@ func (s *session) getByteStream(referenceId uint64) *byteStream {
 	return bs
 }
 
-func (s *session) dial(referenceId uint64) (*byteStream, error) {
+func (s *SpdyTransport) dial(referenceId uint64) (*byteStream, error) {
 	headers := http.Header{}
 	headers.Set("libchan-ref", strconv.FormatUint(referenceId, 10))
 	stream, streamErr := s.conn.CreateStream(headers, nil, false)
@@ -145,7 +145,7 @@ func (s *session) dial(referenceId uint64) (*byteStream, error) {
 	return bs, nil
 }
 
-func (s *session) createByteStream() (io.ReadWriteCloser, error) {
+func (s *SpdyTransport) createByteStream() (io.ReadWriteCloser, error) {
 	s.referenceLock.Lock()
 	referenceId := s.referenceCounter
 	s.referenceCounter = referenceId + 2
@@ -172,7 +172,14 @@ func addrKey(local, remote string) string {
 	return string(b)
 }
 
-func (s *session) RegisterConn(conn net.Conn) error {
+// RegisterConn registers a network connection to be used
+// by inbound messages referring to the connection
+// with the registered connection's local and remote address.
+// Note: a connection does not need to be registered before
+// being sent in a message, but does need to be registered
+// to by the receiver of a message. If registration should be
+// automatic, register a listener instead.
+func (s *SpdyTransport) RegisterConn(conn net.Conn) error {
 	s.netConnC.L.Lock()
 	defer s.netConnC.L.Unlock()
 	networkType, ok := s.networks[conn.LocalAddr().Network()]
@@ -186,7 +193,9 @@ func (s *session) RegisterConn(conn net.Conn) error {
 	return nil
 }
 
-func (s *session) RegisterListener(listener net.Listener) {
+// RegisterListener accepts all connections from the listener
+// and immediately registers them.
+func (s *SpdyTransport) RegisterListener(listener net.Listener) {
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -203,18 +212,24 @@ func (s *session) RegisterListener(listener net.Listener) {
 	}()
 }
 
-func (s *session) Unregister(net.Conn) {
+// Unregister removes the connection from the list of known
+// connections. This should be called when a connection is
+// closed and no longer expected in inbound messages.
+// Failure to unregister connections will increase memory
+// usage since the transport is not notified of closed
+// connections to automatically unregister.
+func (s *SpdyTransport) Unregister(net.Conn) {
 
 }
 
-func (s *session) Close() error {
+func (s *SpdyTransport) Close() error {
 	return s.conn.Close()
 }
 
 // NewSendChannel creates and returns a new send channel.  The receive
 // end will get picked up on the remote end through the remote calling
 // WaitReceiveChannel.
-func (s *session) NewSendChannel() (libchan.Sender, error) {
+func (s *SpdyTransport) NewSendChannel() (libchan.Sender, error) {
 	stream, streamErr := s.conn.CreateStream(http.Header{}, nil, false)
 	if streamErr != nil {
 		return nil, streamErr
@@ -224,7 +239,7 @@ func (s *session) NewSendChannel() (libchan.Sender, error) {
 
 // WaitReceiveChannel waits for a new channel be created by a remote
 // call to NewSendChannel.
-func (s *session) WaitReceiveChannel() (libchan.Receiver, error) {
+func (s *SpdyTransport) WaitReceiveChannel() (libchan.Receiver, error) {
 	stream, ok := <-s.streamChan
 	if !ok {
 		return nil, io.EOF

@@ -2,38 +2,36 @@ package spdy
 
 import (
 	"net"
-
-	"github.com/docker/libchan"
 )
 
-// SessionListener is a listener which accepts new
-// connections angi rd spawns spdy sessions.
-type SessionListener struct {
+// TransportListener is a listener which accepts new
+// connections angi rd spawns spdy transports.
+type TransportListener struct {
 	listener net.Listener
 	auth     Authenticator
 }
 
-// NewSessionListener creates a new listen session using
+// NewTransportListener creates a new listen transport using
 // a network listeners and function to authenticate
-// new connections.  SessionListener expects tls session
+// new connections.  TransportListener expects tls session
 // handling to occur by the authenticator or the listener,
-// SessionListener will not perform tls handshakes.
-func NewSessionListener(listener net.Listener, auth Authenticator) (*SessionListener, error) {
-	return &SessionListener{
+// TransportListener will not perform tls handshakes.
+func NewTransportListener(listener net.Listener, auth Authenticator) (*TransportListener, error) {
+	return &TransportListener{
 		listener: listener,
 		auth:     auth,
 	}, nil
 }
 
 // Close closes the underlying listener
-func (l *SessionListener) Close() error {
+func (l *TransportListener) Close() error {
 	return l.listener.Close()
 }
 
-// AcceptSessions waits for a new network connections
+// AcceptTransport waits for a new network connections
 // and creates a new stream.  Connections which fail
 // authentication will not be returned.
-func (l *SessionListener) AcceptSession() (libchan.Transport, error) {
+func (l *TransportListener) AcceptTransport() (*SpdyTransport, error) {
 	for {
 		conn, err := l.listener.Accept()
 		if err != nil {

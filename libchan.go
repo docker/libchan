@@ -2,7 +2,6 @@ package libchan
 
 import (
 	"io"
-	"net"
 )
 
 // Transport represents a connection which can multiplex channels and
@@ -16,27 +15,6 @@ type Transport interface {
 	// WaitReceiveChannel waits for a new channel be created by the
 	// remote end of the transport calling NewSendChannel.
 	WaitReceiveChannel() (Receiver, error)
-
-	// RegisterConn registers a network connection to be used
-	// by inbound messages referring to the connection
-	// with the registered connection's local and remote address.
-	// Note: a connection does not need to be registered before
-	// being sent in a message, but does need to be registered
-	// to by the receiver of a message. If registration should be
-	// automatic, register a listener instead.
-	RegisterConn(net.Conn) error
-
-	// RegisterListener accepts all connections from the listener
-	// and immediately registers them.
-	RegisterListener(net.Listener)
-
-	// Unregister removes the connection from the list of known
-	// connections. This should be called when a connection is
-	// closed and no longer expected in inbound messages.
-	// Failure to unregister connections will increase memory
-	// usage since the transport is not notified of closed
-	// connections to automatically unregister.
-	Unregister(net.Conn)
 }
 
 // Sender is a channel which sent messages of any content
