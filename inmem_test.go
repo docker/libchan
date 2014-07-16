@@ -13,11 +13,11 @@ import (
 type InMemMessage struct {
 	Data   string
 	Stream io.ReadWriteCloser
-	Ret    ChannelSender
+	Ret    Sender
 }
 
 func TestInmemRetPipe(t *testing.T) {
-	client := func(t *testing.T, w ChannelSender) {
+	client := func(t *testing.T, w Sender) {
 		ret, retPipe, err := w.CreateNestedReceiver()
 		if err != nil {
 			t.Fatal(err)
@@ -39,7 +39,7 @@ func TestInmemRetPipe(t *testing.T) {
 		}
 
 	}
-	server := func(t *testing.T, r ChannelReceiver) {
+	server := func(t *testing.T, r Receiver) {
 		msg := &InMemMessage{}
 		err := r.Receive(msg)
 		if err != nil {
@@ -63,13 +63,13 @@ func TestInmemRetPipe(t *testing.T) {
 }
 
 func TestSimpleSend(t *testing.T) {
-	client := func(t *testing.T, w ChannelSender) {
+	client := func(t *testing.T, w Sender) {
 		message := &InMemMessage{Data: "hello world"}
 		if err := w.Send(message); err != nil {
 			t.Fatal(err)
 		}
 	}
-	server := func(t *testing.T, r ChannelReceiver) {
+	server := func(t *testing.T, r Receiver) {
 		msg := &InMemMessage{Data: "hello world"}
 		err := r.Receive(msg)
 		if err != nil {
@@ -83,7 +83,7 @@ func TestSimpleSend(t *testing.T) {
 }
 
 func TestSendReply(t *testing.T) {
-	client := func(t *testing.T, w ChannelSender) {
+	client := func(t *testing.T, w Sender) {
 		ret, retPipe, err := w.CreateNestedReceiver()
 		if err != nil {
 			t.Fatal(err)
@@ -104,7 +104,7 @@ func TestSendReply(t *testing.T) {
 			t.Fatalf("%#v", msg)
 		}
 	}
-	server := func(t *testing.T, r ChannelReceiver) {
+	server := func(t *testing.T, r Receiver) {
 		// Receive a message with mode=Ret
 		msg := &InMemMessage{}
 		err := r.Receive(msg)
@@ -139,7 +139,7 @@ func TestSendFile(t *testing.T) {
 	tmp.Sync()
 	tmp.Seek(0, 0)
 
-	client := func(t *testing.T, w ChannelSender) {
+	client := func(t *testing.T, w Sender) {
 		bs, err := w.CreateByteStream()
 		if err != nil {
 			t.Fatalf("Error creating byte stream: %s", err)
@@ -159,7 +159,7 @@ func TestSendFile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server := func(t *testing.T, r ChannelReceiver) {
+	server := func(t *testing.T, r Receiver) {
 		msg := &InMemMessage{}
 		err := r.Receive(msg)
 		if err != nil {
@@ -182,8 +182,8 @@ func TestSendFile(t *testing.T) {
 
 type ComplexMessage struct {
 	Message  string
-	Sender   ChannelSender
-	Receiver ChannelReceiver
+	Sender   Sender
+	Receiver Receiver
 	Stream   io.ReadWriteCloser
 }
 
@@ -192,7 +192,7 @@ type SimpleMessage struct {
 }
 
 func TestComplexMessage(t *testing.T) {
-	client := func(t *testing.T, w ChannelSender) {
+	client := func(t *testing.T, w Sender) {
 		send, remoteRecv, err := w.CreateNestedSender()
 		if err != nil {
 			t.Fatalf("Error creating sender: %s", err)
@@ -253,7 +253,7 @@ func TestComplexMessage(t *testing.T) {
 			t.Fatalf("Error closing byte stream: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, r ChannelReceiver) {
+	server := func(t *testing.T, r Receiver) {
 		m1 := &ComplexMessage{}
 		receiveErr := r.Receive(m1)
 		if receiveErr != nil {
@@ -303,8 +303,8 @@ func TestComplexMessage(t *testing.T) {
 	SpawnPipeTestRoutines(t, client, server)
 }
 
-type SendTestRoutine func(*testing.T, ChannelSender)
-type ReceiveTestRoutine func(*testing.T, ChannelReceiver)
+type SendTestRoutine func(*testing.T, Sender)
+type ReceiveTestRoutine func(*testing.T, Receiver)
 
 var RoutineTimeout = 300 * time.Millisecond
 var DumpStackOnTimeout = true

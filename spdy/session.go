@@ -20,6 +20,10 @@ const (
 	inbound  = direction(0x02)
 )
 
+var (
+	ErrWrongDirection = errors.New("Wrong channel direction")
+)
+
 // session is a transport session on top of a network
 // connection using spdy.
 type session struct {
@@ -210,7 +214,7 @@ func (s *session) Close() error {
 // NewSendChannel creates and returns a new send channel.  The receive
 // end will get picked up on the remote end through the remote calling
 // WaitReceiveChannel.
-func (s *session) NewSendChannel() (libchan.ChannelSender, error) {
+func (s *session) NewSendChannel() (libchan.Sender, error) {
 	stream, streamErr := s.conn.CreateStream(http.Header{}, nil, false)
 	if streamErr != nil {
 		return nil, streamErr
@@ -220,7 +224,7 @@ func (s *session) NewSendChannel() (libchan.ChannelSender, error) {
 
 // WaitReceiveChannel waits for a new channel be created by a remote
 // call to NewSendChannel.
-func (s *session) WaitReceiveChannel() (libchan.ChannelReceiver, error) {
+func (s *session) WaitReceiveChannel() (libchan.Receiver, error) {
 	stream, ok := <-s.streamChan
 	if !ok {
 		return nil, io.EOF
@@ -233,7 +237,7 @@ func (s *session) WaitReceiveChannel() (libchan.ChannelReceiver, error) {
 	}, nil
 }
 
-func (c *channel) createSubChannel(direction direction) (libchan.ChannelSender, libchan.ChannelReceiver, error) {
+func (c *channel) createSubChannel(direction direction) (libchan.Sender, libchan.Receiver, error) {
 	if c.direction == inbound {
 		return nil, nil, errors.New("Cannot create sub channel of an input channel")
 	}
@@ -258,7 +262,7 @@ func (c *channel) CreateByteStream() (io.ReadWriteCloser, error) {
 // CreateNestedReceiver creates a new channel returning the local
 // receiver and the remote sender.  The remote sender needs to be
 // sent across the channel before being utilized.
-func (c *channel) CreateNestedReceiver() (libchan.ChannelReceiver, libchan.ChannelSender, error) {
+func (c *channel) CreateNestedReceiver() (libchan.Receiver, libchan.Sender, error) {
 	send, recv, err := c.createSubChannel(inbound)
 	return recv, send, err
 }
@@ -266,7 +270,7 @@ func (c *channel) CreateNestedReceiver() (libchan.ChannelReceiver, libchan.Chann
 // CreateNestedReceiver creates a new channel returning the local
 // sender and the remote receiver.  The remote receiver needs to be
 // sent across the channel before being utilized.
-func (c *channel) CreateNestedSender() (libchan.ChannelSender, libchan.ChannelReceiver, error) {
+func (c *channel) CreateNestedSender() (libchan.Sender, libchan.Receiver, error) {
 	return c.createSubChannel(outbound)
 }
 
@@ -274,7 +278,7 @@ func (c *channel) CreateNestedSender() (libchan.ChannelSender, libchan.ChannelRe
 // other side of the transport.
 func (c *channel) Send(message interface{}) error {
 	if c.direction == inbound {
-		return libchan.ErrWrongDirection
+		return ErrWrongDirection
 	}
 	var buf []byte
 	encoder := codec.NewEncoderBytes(&buf, c.session.handler)
@@ -295,7 +299,7 @@ func (c *channel) Send(message interface{}) error {
 // a sender on the other side of the transport.
 func (c *channel) Receive(message interface{}) error {
 	if c.direction == outbound {
-		return libchan.ErrWrongDirection
+		return ErrWrongDirection
 	}
 	buf, readErr := c.stream.ReadData()
 	if readErr != nil {

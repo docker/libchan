@@ -9,16 +9,16 @@ import (
 
 type pipeSender struct {
 	session *session
-	sender  libchan.ChannelSender
+	sender  libchan.Sender
 }
 
 type pipeReceiver struct {
 	session  *session
-	receiver libchan.ChannelReceiver
+	receiver libchan.Receiver
 }
 
 // Pipe creates a channel pipe using an in memory transport.
-func Pipe() (libchan.ChannelSender, libchan.ChannelReceiver, error) {
+func Pipe() (libchan.Sender, libchan.Receiver, error) {
 	c1, c2 := net.Pipe()
 
 	s1, err := newSession(c1, false)
@@ -31,7 +31,7 @@ func Pipe() (libchan.ChannelSender, libchan.ChannelReceiver, error) {
 		return nil, nil, err
 	}
 
-	var receiver libchan.ChannelReceiver
+	var receiver libchan.Receiver
 	waitError := make(chan error)
 
 	go func() {
@@ -72,11 +72,11 @@ func (p *pipeSender) CreateByteStream() (io.ReadWriteCloser, error) {
 	return p.sender.CreateByteStream()
 }
 
-func (p *pipeSender) CreateNestedReceiver() (libchan.ChannelReceiver, libchan.ChannelSender, error) {
+func (p *pipeSender) CreateNestedReceiver() (libchan.Receiver, libchan.Sender, error) {
 	return p.sender.CreateNestedReceiver()
 }
 
-func (p *pipeSender) CreateNestedSender() (libchan.ChannelSender, libchan.ChannelReceiver, error) {
+func (p *pipeSender) CreateNestedSender() (libchan.Sender, libchan.Receiver, error) {
 	return p.sender.CreateNestedSender()
 }
 

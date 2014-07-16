@@ -11,7 +11,7 @@ import (
 	"github.com/ugorji/go/codec"
 )
 
-func Pipe() (ChannelReceiver, ChannelSender) {
+func Pipe() (Receiver, Sender) {
 	session := createStreamSession()
 	return session.createPipe()
 }
@@ -40,7 +40,7 @@ func createStreamSession() *streamSession {
 	return session
 }
 
-func (s *streamSession) createPipe() (ChannelReceiver, ChannelSender) {
+func (s *streamSession) createPipe() (Receiver, Sender) {
 	r, w := io.Pipe()
 	s.pipeLock.Lock()
 	pipeId := s.pipeCount + 1
@@ -197,13 +197,13 @@ func (w *PipeSender) CreateByteStream() (io.ReadWriteCloser, error) {
 	return w.session.newByteStream()
 }
 
-func (w *PipeSender) CreateNestedReceiver() (ChannelReceiver, ChannelSender, error) {
+func (w *PipeSender) CreateNestedReceiver() (Receiver, Sender, error) {
 	recv, send := w.session.createPipe()
 	return recv, send, nil
 
 }
 
-func (w *PipeSender) CreateNestedSender() (ChannelSender, ChannelReceiver, error) {
+func (w *PipeSender) CreateNestedSender() (Sender, Receiver, error) {
 	recv, send := w.session.createPipe()
 	return send, recv, nil
 }

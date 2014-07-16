@@ -12,7 +12,7 @@ import (
 
 type ProxiedMessage struct {
 	Message string
-	Ret     libchan.ChannelSender
+	Ret     libchan.Sender
 }
 
 type ProxyAckMessage struct {
@@ -27,7 +27,7 @@ func TestChannelProxy(t *testing.T) {
 		"Far less interesting message",
 		"This was ALSO sent over the proxy",
 	}
-	client := func(t *testing.T, sender libchan.ChannelSender) {
+	client := func(t *testing.T, sender libchan.Sender) {
 		for i, m := range messages {
 			nestedReceiver, remoteSender, err := sender.CreateNestedReceiver()
 			if err != nil {
@@ -60,7 +60,7 @@ func TestChannelProxy(t *testing.T) {
 		}
 
 	}
-	server := func(t *testing.T, receiver libchan.ChannelReceiver) {
+	server := func(t *testing.T, receiver libchan.Receiver) {
 		for i, m := range messages {
 			message := &ProxiedMessage{}
 			err := receiver.Receive(message)
@@ -89,7 +89,7 @@ type ProxiedStreamMessage struct {
 func TestByteStreamProxy(t *testing.T) {
 	sendString := "Sending a string"
 	retString := "Returned string"
-	client := func(t *testing.T, sender libchan.ChannelSender) {
+	client := func(t *testing.T, sender libchan.Sender) {
 		bs, err := sender.CreateByteStream()
 		if err != nil {
 			t.Fatalf("Error creating byte stream: %s", err)
@@ -115,7 +115,7 @@ func TestByteStreamProxy(t *testing.T) {
 			t.Fatalf("Unexpected string value:\n\tExpected: %s\n\tActual: %s", retString, string(buf[:n]))
 		}
 	}
-	server := func(t *testing.T, receiver libchan.ChannelReceiver) {
+	server := func(t *testing.T, receiver libchan.Receiver) {
 		message := &ProxiedStreamMessage{}
 		err := receiver.Receive(message)
 		if err != nil {
@@ -150,7 +150,7 @@ func SpawnProxyTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverR
 
 	go func() {
 		defer close(endProxy)
-		n, err := libchan.CopyChannel(sender2, receiver1)
+		n, err := libchan.Copy(sender2, receiver1)
 		if err != nil {
 			t.Errorf("Error proxying: %s", err)
 		}

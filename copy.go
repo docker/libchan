@@ -4,7 +4,10 @@ import (
 	"io"
 )
 
-func CopyChannel(w ChannelSender, r ChannelReceiver) (int, error) {
+// Copy copies from a receiver to a sender until an EOF is
+// received.  The number of copies made is returned along
+// with any error that may have halted copying prior to an EOF.
+func Copy(w Sender, r Receiver) (int, error) {
 	var n int
 	for {
 		m := make(map[string]interface{})
@@ -30,7 +33,7 @@ func CopyChannel(w ChannelSender, r ChannelReceiver) (int, error) {
 	return n, nil
 }
 
-func copyByteStream(sender ChannelSender, stream io.ReadWriteCloser) (io.ReadWriteCloser, error) {
+func copyByteStream(sender Sender, stream io.ReadWriteCloser) (io.ReadWriteCloser, error) {
 	streamCopy, err := sender.CreateByteStream()
 	if err != nil {
 		return nil, err
@@ -46,7 +49,7 @@ func copyByteStream(sender ChannelSender, stream io.ReadWriteCloser) (io.ReadWri
 	return streamCopy, nil
 }
 
-func copyChannelMessage(sender ChannelSender, m map[string]interface{}) (map[string]interface{}, error) {
+func copyChannelMessage(sender Sender, m map[string]interface{}) (map[string]interface{}, error) {
 	mCopy := make(map[string]interface{})
 	for k, v := range m {
 		// Throw error if tcp/udp connections?
@@ -57,23 +60,23 @@ func copyChannelMessage(sender ChannelSender, m map[string]interface{}) (map[str
 				return nil, err
 			}
 			mCopy[k] = streamCopy
-		case ChannelSender:
+		case Sender:
 			recv, send, err := sender.CreateNestedReceiver()
 			if err != nil {
 				return nil, err
 			}
 			go func() {
-				CopyChannel(val, recv)
+				Copy(val, recv)
 				// TODO propagate or log error
 			}()
 			mCopy[k] = send
-		case ChannelReceiver:
+		case Receiver:
 			send, recv, err := sender.CreateNestedSender()
 			if err != nil {
 				return nil, err
 			}
 			go func() {
-				CopyChannel(send, val)
+				Copy(send, val)
 				// TODO propagate or log error
 			}()
 			mCopy[k] = recv

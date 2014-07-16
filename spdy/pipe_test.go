@@ -13,7 +13,7 @@ import (
 type PipeMessage struct {
 	Message string
 	Stream  io.ReadWriteCloser
-	Send    libchan.ChannelSender
+	Send    libchan.Sender
 }
 
 func TestSendFirstPipe(t *testing.T) {
@@ -21,7 +21,7 @@ func TestSendFirstPipe(t *testing.T) {
 	message2 := "Must more simple message"
 	message3 := "This was sent over a byte stream"
 	message4 := "This was ALSO sent over a byte stream"
-	client := func(t *testing.T, sender libchan.ChannelSender) {
+	client := func(t *testing.T, sender libchan.Sender) {
 		bs, err := sender.CreateByteStream()
 		if err != nil {
 			t.Fatalf("Error creating byte stream: %s", err)
@@ -71,7 +71,7 @@ func TestSendFirstPipe(t *testing.T) {
 			t.Fatalf("Error closing nested receiver: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.ChannelReceiver) {
+	server := func(t *testing.T, receiver libchan.Receiver) {
 		m1 := &PipeMessage{}
 		recvErr := receiver.Receive(m1)
 		if recvErr != nil {
@@ -110,8 +110,8 @@ func TestSendFirstPipe(t *testing.T) {
 	SpawnPipeTest(t, client, server)
 }
 
-type PipeSenderRoutine func(*testing.T, libchan.ChannelSender)
-type PipeReceiverRoutine func(*testing.T, libchan.ChannelReceiver)
+type PipeSenderRoutine func(*testing.T, libchan.Sender)
+type PipeReceiverRoutine func(*testing.T, libchan.Receiver)
 
 func SpawnPipeTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverRoutine) {
 	endClient := make(chan bool)
