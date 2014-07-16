@@ -49,8 +49,8 @@ func (s *streamSession) createPipe() (Receiver, Sender) {
 	s.pipeWriters[pipeId] = w
 	s.pipeLock.Unlock()
 
-	recv := &PipeReceiver{pipeId, s, r, codec.NewDecoder(r, s.handler)}
-	send := &PipeSender{pipeId, s, w, codec.NewEncoder(w, s.handler)}
+	recv := &pipeReceiver{pipeId, s, r, codec.NewDecoder(r, s.handler)}
+	send := &pipeSender{pipeId, s, w, codec.NewEncoder(w, s.handler)}
 	return recv, send
 }
 
@@ -74,7 +74,7 @@ func (s *streamSession) newByteStream() (io.ReadWriteCloser, error) {
 }
 
 func (s *streamSession) encodeReceiver(v reflect.Value) ([]byte, error) {
-	bs := v.Interface().(PipeReceiver)
+	bs := v.Interface().(pipeReceiver)
 	if bs.pipeId == 0 {
 		return nil, errors.New("bad type")
 	}
@@ -95,13 +95,13 @@ func (s *streamSession) decodeReceiver(v reflect.Value, b []byte) error {
 		return errors.New("Receiver does not exist")
 	}
 
-	v.Set(reflect.ValueOf(PipeReceiver{pipeId, s, r, codec.NewDecoder(r, s.handler)}))
+	v.Set(reflect.ValueOf(pipeReceiver{pipeId, s, r, codec.NewDecoder(r, s.handler)}))
 
 	return nil
 }
 
 func (s *streamSession) encodeSender(v reflect.Value) ([]byte, error) {
-	sender := v.Interface().(PipeSender)
+	sender := v.Interface().(pipeSender)
 	if sender.pipeId == 0 {
 		return nil, errors.New("bad type")
 	}
@@ -122,7 +122,7 @@ func (s *streamSession) decodeSender(v reflect.Value, b []byte) error {
 		return errors.New("Receiver does not exist")
 	}
 
-	v.Set(reflect.ValueOf(PipeSender{pipeId, s, w, codec.NewEncoder(w, s.handler)}))
+	v.Set(reflect.ValueOf(pipeSender{pipeId, s, w, codec.NewEncoder(w, s.handler)}))
 
 	return nil
 }
@@ -160,12 +160,12 @@ func getMsgPackHandler(session *streamSession) *codec.MsgpackHandle {
 	mh := &codec.MsgpackHandle{WriteExt: true}
 	mh.RawToString = true
 
-	err := mh.AddExt(reflect.TypeOf(PipeReceiver{}), 1, session.encodeReceiver, session.decodeReceiver)
+	err := mh.AddExt(reflect.TypeOf(pipeReceiver{}), 1, session.encodeReceiver, session.decodeReceiver)
 	if err != nil {
 		panic(err)
 	}
 
-	err = mh.AddExt(reflect.TypeOf(PipeSender{}), 2, session.encodeSender, session.decodeSender)
+	err = mh.AddExt(reflect.TypeOf(pipeSender{}), 2, session.encodeSender, session.decodeSender)
 	if err != nil {
 		panic(err)
 	}
@@ -178,48 +178,48 @@ func getMsgPackHandler(session *streamSession) *codec.MsgpackHandle {
 	return mh
 }
 
-type PipeSender struct {
+type pipeSender struct {
 	pipeId  uint64
 	session *streamSession
 	p       *io.PipeWriter
 	encoder *codec.Encoder
 }
 
-func (w *PipeSender) Send(message interface{}) error {
+func (w *pipeSender) Send(message interface{}) error {
 	return w.encoder.Encode(message)
 }
 
-func (w *PipeSender) Close() error {
+func (w *pipeSender) Close() error {
 	return w.p.Close()
 }
 
-func (w *PipeSender) CreateByteStream() (io.ReadWriteCloser, error) {
+func (w *pipeSender) CreateByteStream() (io.ReadWriteCloser, error) {
 	return w.session.newByteStream()
 }
 
-func (w *PipeSender) CreateNestedReceiver() (Receiver, Sender, error) {
+func (w *pipeSender) CreateNestedReceiver() (Receiver, Sender, error) {
 	recv, send := w.session.createPipe()
 	return recv, send, nil
 
 }
 
-func (w *PipeSender) CreateNestedSender() (Sender, Receiver, error) {
+func (w *pipeSender) CreateNestedSender() (Sender, Receiver, error) {
 	recv, send := w.session.createPipe()
 	return send, recv, nil
 }
 
-type PipeReceiver struct {
+type pipeReceiver struct {
 	pipeId  uint64
 	session *streamSession
 	p       *io.PipeReader
 	decoder *codec.Decoder
 }
 
-func (r *PipeReceiver) Receive(message interface{}) error {
+func (r *pipeReceiver) Receive(message interface{}) error {
 	return r.decoder.Decode(message)
 }
 
-func (r *PipeReceiver) Close() error {
+func (r *pipeReceiver) Close() error {
 	return r.p.Close()
 }
 
