@@ -292,6 +292,74 @@ func TestByteStream(t *testing.T) {
 	SpawnClientServerTest(t, "localhost:12944", ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
+type WrappedMessage struct {
+	Message string
+	Wrapped io.ReadWriteCloser
+}
+
+func TestWrappedByteStreams(t *testing.T) {
+	serverSend := "G'day client ☺"
+	clientReply := "Hello Server, ☢ FYI your stream was transparently copied ☠"
+	client := func(t *testing.T, sender libchan.Sender, s *SpdyTransport) {
+		// Create pipe
+		p1, p2 := net.Pipe()
+
+		m1 := &WrappedMessage{
+			Message: "wrapped",
+			Wrapped: libchan.ByteStreamWrapper{p2},
+		}
+
+		sendErr := sender.Send(m1)
+		if sendErr != nil {
+			t.Fatalf("Error sending channel: %s", sendErr)
+		}
+
+		// read
+		readBytes := make([]byte, 30)
+		n, readErr := p1.Read(readBytes)
+		if readErr != nil {
+			t.Fatalf("Error reading from byte stream: %s", readErr)
+		}
+		if expected := serverSend; string(readBytes[:n]) != expected {
+			t.Fatalf("Unexpected read value:\n\tExpected: %q\n\tActual: %q", expected, string(readBytes[:n]))
+		}
+
+		// write
+		_, writeErr := p1.Write([]byte(clientReply))
+		if writeErr != nil {
+			t.Fatalf("Error writing to byte stream: %s", writeErr)
+		}
+
+	}
+	server := func(t *testing.T, receiver libchan.Receiver, s *SpdyTransport) {
+		m1 := &WrappedMessage{}
+		recvErr := receiver.Receive(m1)
+		if recvErr != nil {
+			t.Fatalf("Error receiving message: %s", recvErr)
+		}
+
+		if expected := "wrapped"; m1.Message != expected {
+			t.Fatalf("Unexpected message\n\tExpected: %s\n\tActual: %s", expected, m1.Message)
+		}
+
+		_, writeErr := m1.Wrapped.Write([]byte(serverSend))
+		if writeErr != nil {
+			t.Fatalf("Error writing to byte stream: %s", writeErr)
+		}
+
+		readBytes := make([]byte, 80)
+		n, readErr := m1.Wrapped.Read(readBytes)
+		if readErr != nil {
+			t.Fatalf("Error reading from byte stream: %s", readErr)
+		}
+		if expected := clientReply; string(readBytes[:n]) != expected {
+			t.Fatalf("Unexpected read value:\n\tExpected: %q\n\tActual: %q", expected, string(readBytes[:n]))
+		}
+
+	}
+	SpawnClientServerTest(t, "localhost:12943", ClientSendWrapper(client), ServerReceiveWrapper(server))
+}
+
 func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s *SpdyTransport)) ClientRoutine {
 	return func(t *testing.T, server string) {
 		conn, connErr := net.Dial("tcp", server)

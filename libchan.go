@@ -60,3 +60,12 @@ type Receiver interface {
 	// automatically closed through receiving an EOF.
 	Close() error
 }
+
+// ByteStreamWrapper is a wrapper around a ReadWriteCloser
+// to cue the transport to copy to a transport byte stream.
+// Note: ReadWriteClosers created through calling the
+// CreateByteStream method on a Sender do not need
+// to wrap the ByteStream.
+type ByteStreamWrapper struct {
+	io.ReadWriteCloser
+}

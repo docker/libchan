@@ -3,11 +3,13 @@ package spdy
 import (
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"reflect"
 	"time"
 
 	"github.com/dmcgowan/go/codec"
+	"github.com/docker/libchan"
 )
 
 func (s *SpdyTransport) encodeChannel(v reflect.Value) ([]byte, error) {
@@ -84,6 +86,33 @@ func (s *SpdyTransport) decodeStream(v reflect.Value, b []byte) error {
 		v.Set(reflect.ValueOf(*bs))
 	}
 
+	return nil
+}
+
+func (s *SpdyTransport) encodeWrapper(v reflect.Value) ([]byte, error) {
+	wrapper := v.Interface().(libchan.ByteStreamWrapper)
+	bs, err := s.createByteStream()
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		io.Copy(bs, wrapper)
+		bs.Close()
+	}()
+
+	go func() {
+		io.Copy(wrapper, bs)
+		wrapper.Close()
+	}()
+
+	return s.encodeStream(reflect.ValueOf(bs).Elem())
+}
+
+func (s *SpdyTransport) decodeWrapper(v reflect.Value, b []byte) error {
+	bs := &byteStream{}
+	s.decodeStream(reflect.ValueOf(bs).Elem(), b)
+	v.FieldByName("ReadWriteCloser").Set(reflect.ValueOf(bs))
 	return nil
 }
 
@@ -214,6 +243,11 @@ func (s *SpdyTransport) initializeHandler() *codec.MsgpackHandle {
 	}
 
 	err = mh.AddExt(reflect.TypeOf(byteStream{}), 0x02, s.encodeStream, s.decodeStream)
+	if err != nil {
+		panic(err)
+	}
+
+	err = mh.AddExt(reflect.TypeOf(libchan.ByteStreamWrapper{}), 0x03, s.encodeWrapper, s.decodeWrapper)
 	if err != nil {
 		panic(err)
 	}

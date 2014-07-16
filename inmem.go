@@ -156,6 +156,33 @@ func (s *streamSession) decodeStream(v reflect.Value, b []byte) error {
 	return nil
 }
 
+func (s *streamSession) encodeWrapper(v reflect.Value) ([]byte, error) {
+	wrapper := v.Interface().(ByteStreamWrapper)
+	bs, err := s.newByteStream()
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		io.Copy(bs, wrapper)
+		bs.Close()
+	}()
+
+	go func() {
+		io.Copy(wrapper, bs)
+		wrapper.Close()
+	}()
+
+	return s.encodeStream(reflect.ValueOf(bs).Elem())
+}
+
+func (s *streamSession) decodeWrapper(v reflect.Value, b []byte) error {
+	bs := &byteStream{}
+	s.decodeStream(reflect.ValueOf(bs).Elem(), b)
+	v.FieldByName("ReadWriteCloser").Set(reflect.ValueOf(bs))
+	return nil
+}
+
 func getMsgPackHandler(session *streamSession) *codec.MsgpackHandle {
 	mh := &codec.MsgpackHandle{WriteExt: true}
 	mh.RawToString = true
@@ -171,6 +198,11 @@ func getMsgPackHandler(session *streamSession) *codec.MsgpackHandle {
 	}
 
 	err = mh.AddExt(reflect.TypeOf(byteStream{}), 3, session.encodeStream, session.decodeStream)
+	if err != nil {
+		panic(err)
+	}
+
+	err = mh.AddExt(reflect.TypeOf(ByteStreamWrapper{}), 4, session.encodeWrapper, session.decodeWrapper)
 	if err != nil {
 		panic(err)
 	}

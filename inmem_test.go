@@ -303,6 +303,44 @@ func TestComplexMessage(t *testing.T) {
 	SpawnPipeTestRoutines(t, client, server)
 }
 
+func TestInmemWrappedSend(t *testing.T) {
+	tmp, err := ioutil.TempFile("", "libchan-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp.Name())
+	fmt.Fprintf(tmp, "hello through a wrapper\n")
+	tmp.Sync()
+	tmp.Seek(0, 0)
+
+	client := func(t *testing.T, w Sender) {
+		message := &InMemMessage{Data: "path=" + tmp.Name(), Stream: ByteStreamWrapper{tmp}}
+		err = w.Send(message)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := func(t *testing.T, r Receiver) {
+		msg := &InMemMessage{}
+		err := r.Receive(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if msg.Data != "path="+tmp.Name() {
+			t.Fatalf("%#v", msg)
+		}
+		txt, err := ioutil.ReadAll(msg.Stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(txt) != "hello through a wrapper\n" {
+			t.Fatalf("%s\n", txt)
+		}
+
+	}
+	SpawnPipeTestRoutines(t, client, server)
+}
+
 type SendTestRoutine func(*testing.T, Sender)
 type ReceiveTestRoutine func(*testing.T, Receiver)
 
