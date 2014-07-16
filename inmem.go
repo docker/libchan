@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/ugorji/go/codec"
+	"github.com/dmcgowan/go/codec"
 )
 
 func Pipe() (Receiver, Sender) {

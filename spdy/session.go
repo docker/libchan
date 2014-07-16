@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/dmcgowan/go/codec"
 	"github.com/docker/libchan"
 	"github.com/docker/spdystream"
-	"github.com/ugorji/go/codec"
 )
 
 type direction uint8

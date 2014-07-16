@@ -3,10 +3,11 @@ package spdy
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/ugorji/go/codec"
 	"net"
 	"reflect"
 	"time"
+
+	"github.com/dmcgowan/go/codec"
 )
 
 func (s *session) encodeChannel(v reflect.Value) ([]byte, error) {
