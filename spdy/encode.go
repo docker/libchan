@@ -12,7 +12,7 @@ import (
 	"github.com/docker/libchan"
 )
 
-func (s *SpdyTransport) encodeChannel(v reflect.Value) ([]byte, error) {
+func (s *Transport) encodeChannel(v reflect.Value) ([]byte, error) {
 	rc := v.Interface().(channel)
 	if rc.stream == nil {
 		return nil, errors.New("bad type")
@@ -22,23 +22,23 @@ func (s *SpdyTransport) encodeChannel(v reflect.Value) ([]byte, error) {
 	}
 
 	// Get stream identifier?
-	streamId := rc.stream.Identifier()
+	streamID := rc.stream.Identifier()
 	var buf [9]byte
 	if rc.direction == inbound {
 		buf[0] = 0x02 // Reverse direction
 	} else if rc.direction == outbound {
 		buf[0] = 0x01 // Reverse direction
 	} else {
-		return nil, errors.New("Invalid direction")
+		return nil, errors.New("invalid direction")
 	}
-	written := binary.PutUvarint(buf[1:], uint64(streamId))
+	written := binary.PutUvarint(buf[1:], uint64(streamID))
 	if written > 4 {
 		return nil, errors.New("wrote unexpected stream id size")
 	}
 	return buf[:(written + 1)], nil
 }
 
-func (s *SpdyTransport) decodeChannel(v reflect.Value, b []byte) error {
+func (s *Transport) decodeChannel(v reflect.Value, b []byte) error {
 	rc := v.Interface().(channel)
 
 	if b[0] == 0x01 {
@@ -49,11 +49,11 @@ func (s *SpdyTransport) decodeChannel(v reflect.Value, b []byte) error {
 		return errors.New("unexpected direction")
 	}
 
-	streamId, readN := binary.Uvarint(b[1:])
+	streamID, readN := binary.Uvarint(b[1:])
 	if readN > 4 {
 		return errors.New("read unexpected stream id size")
 	}
-	stream := s.conn.FindStream(uint32(streamId))
+	stream := s.conn.FindStream(uint32(streamID))
 	if stream == nil {
 		return errors.New("stream does not exist")
 	}
@@ -64,24 +64,24 @@ func (s *SpdyTransport) decodeChannel(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *SpdyTransport) encodeStream(v reflect.Value) ([]byte, error) {
+func (s *Transport) encodeStream(v reflect.Value) ([]byte, error) {
 	bs := v.Interface().(byteStream)
-	if bs.ReferenceId == 0 {
+	if bs.ReferenceID == 0 {
 		return nil, errors.New("bad type")
 	}
 	var buf [8]byte
-	written := binary.PutUvarint(buf[:], uint64(bs.ReferenceId))
+	written := binary.PutUvarint(buf[:], uint64(bs.ReferenceID))
 
 	return buf[:written], nil
 }
 
-func (s *SpdyTransport) decodeStream(v reflect.Value, b []byte) error {
-	referenceId, readN := binary.Uvarint(b)
+func (s *Transport) decodeStream(v reflect.Value, b []byte) error {
+	referenceID, readN := binary.Uvarint(b)
 	if readN == 0 {
 		return errors.New("bad reference id")
 	}
 
-	bs := s.getByteStream(referenceId)
+	bs := s.getByteStream(referenceID)
 	if bs != nil {
 		v.Set(reflect.ValueOf(*bs))
 	}
@@ -89,7 +89,7 @@ func (s *SpdyTransport) decodeStream(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *SpdyTransport) encodeWrapper(v reflect.Value) ([]byte, error) {
+func (s *Transport) encodeWrapper(v reflect.Value) ([]byte, error) {
 	wrapper := v.Interface().(libchan.ByteStreamWrapper)
 	bs, err := s.createByteStream()
 	if err != nil {
@@ -109,14 +109,14 @@ func (s *SpdyTransport) encodeWrapper(v reflect.Value) ([]byte, error) {
 	return s.encodeStream(reflect.ValueOf(bs).Elem())
 }
 
-func (s *SpdyTransport) decodeWrapper(v reflect.Value, b []byte) error {
+func (s *Transport) decodeWrapper(v reflect.Value, b []byte) error {
 	bs := &byteStream{}
 	s.decodeStream(reflect.ValueOf(bs).Elem(), b)
 	v.FieldByName("ReadWriteCloser").Set(reflect.ValueOf(bs))
 	return nil
 }
 
-func (s *SpdyTransport) waitConn(network, local, remote string, timeout time.Duration) (net.Conn, error) {
+func (s *Transport) waitConn(network, local, remote string, timeout time.Duration) (net.Conn, error) {
 	timeoutChan := time.After(timeout)
 	connChan := make(chan net.Conn)
 
@@ -202,7 +202,7 @@ func decodeString3(b []byte) (string, string, string, error) {
 	return s1, s2, s3, nil
 }
 
-func (s *SpdyTransport) encodeNetConn(v reflect.Value) ([]byte, error) {
+func (s *Transport) encodeNetConn(v reflect.Value) ([]byte, error) {
 	var conn net.Conn
 	switch t := v.Interface().(type) {
 	case net.TCPConn:
@@ -212,14 +212,14 @@ func (s *SpdyTransport) encodeNetConn(v reflect.Value) ([]byte, error) {
 	case net.Conn:
 		conn = t
 	default:
-		return nil, errors.New("Unknown type")
+		return nil, errors.New("unknown type")
 	}
 
 	// Flip remote and local for encoding
 	return encodeString3(conn.LocalAddr().Network(), conn.RemoteAddr().String(), conn.LocalAddr().String())
 }
 
-func (s *SpdyTransport) decodeNetConn(v reflect.Value, b []byte) error {
+func (s *Transport) decodeNetConn(v reflect.Value, b []byte) error {
 	network, local, remote, err := decodeString3(b)
 	if err != nil {
 		return err
@@ -234,7 +234,7 @@ func (s *SpdyTransport) decodeNetConn(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *SpdyTransport) initializeHandler() *codec.MsgpackHandle {
+func (s *Transport) initializeHandler() *codec.MsgpackHandle {
 	mh := &codec.MsgpackHandle{WriteExt: true}
 	mh.RawToString = true
 	err := mh.AddExt(reflect.TypeOf(channel{}), 0x01, s.encodeChannel, s.decodeChannel)

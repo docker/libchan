@@ -31,7 +31,7 @@ func (l *TransportListener) Close() error {
 // AcceptTransport waits for a new network connections
 // and creates a new stream.  Connections which fail
 // authentication will not be returned.
-func (l *TransportListener) AcceptTransport() (*SpdyTransport, error) {
+func (l *TransportListener) AcceptTransport() (*Transport, error) {
 	for {
 		conn, err := l.listener.Accept()
 		if err != nil {

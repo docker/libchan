@@ -11,6 +11,7 @@ import (
 	"github.com/dmcgowan/go/codec"
 )
 
+// Pipe returns an inmemory Sender/Receiver pair.
 func Pipe() (Receiver, Sender) {
 	session := createStreamSession()
 	return session.createPipe()
@@ -25,7 +26,7 @@ type streamSession struct {
 	handler codec.Handle
 
 	referenceLock sync.Mutex
-	referenceId   uint64
+	referenceID   uint64
 	byteStreams   map[uint64]*byteStream
 }
 
@@ -33,7 +34,7 @@ func createStreamSession() *streamSession {
 	session := &streamSession{
 		pipeReaders: make(map[uint64]*io.PipeReader),
 		pipeWriters: make(map[uint64]*io.PipeWriter),
-		referenceId: 2,
+		referenceID: 2,
 		byteStreams: make(map[uint64]*byteStream),
 	}
 	session.handler = getMsgPackHandler(session)
@@ -43,14 +44,14 @@ func createStreamSession() *streamSession {
 func (s *streamSession) createPipe() (Receiver, Sender) {
 	r, w := io.Pipe()
 	s.pipeLock.Lock()
-	pipeId := s.pipeCount + 1
-	s.pipeCount = pipeId
-	s.pipeReaders[pipeId] = r
-	s.pipeWriters[pipeId] = w
+	pipeID := s.pipeCount + 1
+	s.pipeCount = pipeID
+	s.pipeReaders[pipeID] = r
+	s.pipeWriters[pipeID] = w
 	s.pipeLock.Unlock()
 
-	recv := &pipeReceiver{pipeId, s, r, codec.NewDecoder(r, s.handler)}
-	send := &pipeSender{pipeId, s, w, codec.NewEncoder(w, s.handler)}
+	recv := &pipeReceiver{pipeID, s, r, codec.NewDecoder(r, s.handler)}
+	send := &pipeSender{pipeID, s, w, codec.NewEncoder(w, s.handler)}
 	return recv, send
 }
 
@@ -58,16 +59,16 @@ func (s *streamSession) newByteStream() (io.ReadWriteCloser, error) {
 	c1, c2 := net.Pipe()
 	bs := &byteStream{
 		Conn:        c1,
-		referenceId: s.referenceId,
+		referenceID: s.referenceID,
 	}
 	s.referenceLock.Lock()
-	s.byteStreams[s.referenceId] = bs
-	s.byteStreams[s.referenceId+1] = &byteStream{
+	s.byteStreams[s.referenceID] = bs
+	s.byteStreams[s.referenceID+1] = &byteStream{
 		Conn:        c2,
-		referenceId: s.referenceId + 1,
+		referenceID: s.referenceID + 1,
 		session:     s,
 	}
-	s.referenceId = s.referenceId + 2
+	s.referenceID = s.referenceID + 2
 	s.referenceLock.Unlock()
 
 	return bs, nil
@@ -75,78 +76,78 @@ func (s *streamSession) newByteStream() (io.ReadWriteCloser, error) {
 
 func (s *streamSession) encodeReceiver(v reflect.Value) ([]byte, error) {
 	bs := v.Interface().(pipeReceiver)
-	if bs.pipeId == 0 {
+	if bs.pipeID == 0 {
 		return nil, errors.New("bad type")
 	}
 	var buf [8]byte
-	written := binary.PutUvarint(buf[:], uint64(bs.pipeId))
+	written := binary.PutUvarint(buf[:], uint64(bs.pipeID))
 
 	return buf[:written], nil
 }
 
 func (s *streamSession) decodeReceiver(v reflect.Value, b []byte) error {
-	pipeId, readN := binary.Uvarint(b)
+	pipeID, readN := binary.Uvarint(b)
 	if readN == 0 {
 		return errors.New("bad reference id")
 	}
 
-	r, ok := s.pipeReaders[pipeId]
+	r, ok := s.pipeReaders[pipeID]
 	if !ok {
-		return errors.New("Receiver does not exist")
+		return errors.New("receiver does not exist")
 	}
 
-	v.Set(reflect.ValueOf(pipeReceiver{pipeId, s, r, codec.NewDecoder(r, s.handler)}))
+	v.Set(reflect.ValueOf(pipeReceiver{pipeID, s, r, codec.NewDecoder(r, s.handler)}))
 
 	return nil
 }
 
 func (s *streamSession) encodeSender(v reflect.Value) ([]byte, error) {
 	sender := v.Interface().(pipeSender)
-	if sender.pipeId == 0 {
+	if sender.pipeID == 0 {
 		return nil, errors.New("bad type")
 	}
 	var buf [8]byte
-	written := binary.PutUvarint(buf[:], uint64(sender.pipeId))
+	written := binary.PutUvarint(buf[:], uint64(sender.pipeID))
 
 	return buf[:written], nil
 }
 
 func (s *streamSession) decodeSender(v reflect.Value, b []byte) error {
-	pipeId, readN := binary.Uvarint(b)
+	pipeID, readN := binary.Uvarint(b)
 	if readN == 0 {
 		return errors.New("bad reference id")
 	}
 
-	w, ok := s.pipeWriters[pipeId]
+	w, ok := s.pipeWriters[pipeID]
 	if !ok {
-		return errors.New("Receiver does not exist")
+		return errors.New("receiver does not exist")
 	}
 
-	v.Set(reflect.ValueOf(pipeSender{pipeId, s, w, codec.NewEncoder(w, s.handler)}))
+	v.Set(reflect.ValueOf(pipeSender{pipeID, s, w, codec.NewEncoder(w, s.handler)}))
 
 	return nil
 }
 
 func (s *streamSession) encodeStream(v reflect.Value) ([]byte, error) {
 	bs := v.Interface().(byteStream)
-	if bs.referenceId == 0 {
+	if bs.referenceID == 0 {
 		return nil, errors.New("bad type")
 	}
 	var buf [8]byte
-	written := binary.PutUvarint(buf[:], uint64(bs.referenceId)^0x01)
+	written := binary.PutUvarint(buf[:], uint64(bs.referenceID)^0x01)
 
 	return buf[:written], nil
 }
 
 func (s *streamSession) decodeStream(v reflect.Value, b []byte) error {
-	referenceId, readN := binary.Uvarint(b)
+	referenceID, readN := binary.Uvarint(b)
 	if readN == 0 {
 		return errors.New("bad reference id")
 	}
 
-	bs, ok := s.byteStreams[referenceId]
+	bs, ok := s.byteStreams[referenceID]
 	if !ok {
-		return errors.New("Byte stream does not exist")
+		return errors.New("byte stream does not exist")
 	}
 
 	if bs != nil {
@@ -211,7 +212,7 @@ func getMsgPackHandler(session *streamSession) *codec.MsgpackHandle {
 }
 
 type pipeSender struct {
-	pipeId  uint64
+	pipeID  uint64
 	session *streamSession
 	p       *io.PipeWriter
 	encoder *codec.Encoder
@@ -241,7 +242,7 @@ func (w *pipeSender) CreateNestedSender() (Sender, Receiver, error) {
 }
 
 type pipeReceiver struct {
-	pipeId  uint64
+	pipeID  uint64
 	session *streamSession
 	p       *io.PipeReader
 	decoder *codec.Decoder
@@ -257,6 +258,6 @@ func (r *pipeReceiver) Close() error {
 
 type byteStream struct {
 	net.Conn
-	referenceId uint64
+	referenceID uint64
 	session     *streamSession
 }

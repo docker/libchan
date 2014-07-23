@@ -21,12 +21,14 @@ const (
 )
 
 var (
-	ErrWrongDirection = errors.New("Wrong channel direction")
+	// ErrWrongDirection occurs when an illegal action is
+	// attempted on a channel because of its direction.
+	ErrWrongDirection = errors.New("wrong channel direction")
 )
 
-// SpdyTransport is a transport session on top of a network
+// Transport is a transport session on top of a network
 // connection using spdy.
-type SpdyTransport struct {
+type Transport struct {
 	conn    *spdystream.Connection
 	handler codec.Handle
 
@@ -44,32 +46,32 @@ type SpdyTransport struct {
 
 type channel struct {
 	stream    *spdystream.Stream
-	session   *SpdyTransport
+	session   *Transport
 	direction direction
 }
 
 // NewClientTransport creates a new stream transport from the
 // provided network connection. The network connection is
 // expected to already provide a tls session.
-func NewClientTransport(conn net.Conn) (*SpdyTransport, error) {
+func NewClientTransport(conn net.Conn) (*Transport, error) {
 	return newSession(conn, false)
 }
 
 // NewServerTransport creates a new stream transport from the
 // provided network connection. The network connection is
 // expected to already have completed the tls handshake.
-func NewServerTransport(conn net.Conn) (*SpdyTransport, error) {
+func NewServerTransport(conn net.Conn) (*Transport, error) {
 	return newSession(conn, true)
 }
 
-func newSession(conn net.Conn, server bool) (*SpdyTransport, error) {
+func newSession(conn net.Conn, server bool) (*Transport, error) {
 	var referenceCounter uint64
 	if server {
 		referenceCounter = 2
 	} else {
 		referenceCounter = 1
 	}
-	session := &SpdyTransport{
+	session := &Transport{
 		streamChan:       make(chan *spdystream.Stream),
 		referenceCounter: referenceCounter,
 		byteStreamC:      sync.NewCond(new(sync.Mutex)),
@@ -91,23 +93,23 @@ func newSession(conn net.Conn, server bool) (*SpdyTransport, error) {
 	return session, nil
 }
 
-func (s *SpdyTransport) newStreamHandler(stream *spdystream.Stream) {
-	referenceIdString := stream.Headers().Get("libchan-ref")
+func (s *Transport) newStreamHandler(stream *spdystream.Stream) {
+	referenceIDString := stream.Headers().Get("libchan-ref")
 
 	returnHeaders := http.Header{}
 	finish := false
-	if referenceIdString != "" {
-		referenceId, parseErr := strconv.ParseUint(referenceIdString, 10, 64)
+	if referenceIDString != "" {
+		referenceID, parseErr := strconv.ParseUint(referenceIDString, 10, 64)
 		if parseErr != nil {
 			returnHeaders.Set("status", "400")
 			finish = true
 		} else {
 			byteStream := &byteStream{
-				ReferenceId: referenceId,
+				ReferenceID: referenceID,
 				Stream:      stream,
 			}
 			s.byteStreamC.L.Lock()
-			s.byteStreams[referenceId] = byteStream
+			s.byteStreams[referenceID] = byteStream
 			s.byteStreamC.Broadcast()
 			s.byteStreamC.L.Unlock()
 		}
@@ -120,45 +122,45 @@ func (s *SpdyTransport) newStreamHandler(stream *spdystream.Stream) {
 	stream.SendReply(returnHeaders, finish)
 }
 
-func (s *SpdyTransport) getByteStream(referenceId uint64) *byteStream {
+func (s *Transport) getByteStream(referenceID uint64) *byteStream {
 	s.byteStreamC.L.Lock()
-	bs, ok := s.byteStreams[referenceId]
+	bs, ok := s.byteStreams[referenceID]
 	if !ok {
 		s.byteStreamC.Wait()
-		bs, ok = s.byteStreams[referenceId]
+		bs, ok = s.byteStreams[referenceID]
 	}
 	s.byteStreamC.L.Unlock()
 	return bs
 }
 
-func (s *SpdyTransport) dial(referenceId uint64) (*byteStream, error) {
+func (s *Transport) dial(referenceID uint64) (*byteStream, error) {
 	headers := http.Header{}
-	headers.Set("libchan-ref", strconv.FormatUint(referenceId, 10))
+	headers.Set("libchan-ref", strconv.FormatUint(referenceID, 10))
 	stream, streamErr := s.conn.CreateStream(headers, nil, false)
 	if streamErr != nil {
 		return nil, streamErr
 	}
 	bs := &byteStream{
-		ReferenceId: referenceId,
+		ReferenceID: referenceID,
 		Stream:      stream,
 	}
 	return bs, nil
 }
 
-func (s *SpdyTransport) createByteStream() (io.ReadWriteCloser, error) {
+func (s *Transport) createByteStream() (io.ReadWriteCloser, error) {
 	s.referenceLock.Lock()
-	referenceId := s.referenceCounter
-	s.referenceCounter = referenceId + 2
+	referenceID := s.referenceCounter
+	s.referenceCounter = referenceID + 2
 	s.referenceLock.Unlock()
 
-	byteStream, bsErr := s.dial(referenceId)
+	byteStream, bsErr := s.dial(referenceID)
 	if bsErr != nil {
 		return nil, bsErr
 	}
-	byteStream.ReferenceId = referenceId
+	byteStream.ReferenceID = referenceID
 
 	s.byteStreamC.L.Lock()
-	s.byteStreams[referenceId] = byteStream
+	s.byteStreams[referenceID] = byteStream
 	s.byteStreamC.L.Unlock()
 
 	return byteStream, nil
@@ -179,7 +181,7 @@ func addrKey(local, remote string) string {
 // being sent in a message, but does need to be registered
 // to by the receiver of a message. If registration should be
 // automatic, register a listener instead.
-func (s *SpdyTransport) RegisterConn(conn net.Conn) error {
+func (s *Transport) RegisterConn(conn net.Conn) error {
 	s.netConnC.L.Lock()
 	defer s.netConnC.L.Unlock()
 	networkType, ok := s.networks[conn.LocalAddr().Network()]
@@ -195,7 +197,7 @@ func (s *SpdyTransport) RegisterConn(conn net.Conn) error {
 
 // RegisterListener accepts all connections from the listener
 // and immediately registers them.
-func (s *SpdyTransport) RegisterListener(listener net.Listener) {
+func (s *Transport) RegisterListener(listener net.Listener) {
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -218,18 +220,19 @@ func (s *SpdyTransport) RegisterListener(listener net.Listener) {
 // Failure to unregister connections will increase memory
 // usage since the transport is not notified of closed
 // connections to automatically unregister.
-func (s *SpdyTransport) Unregister(net.Conn) {
+func (s *Transport) Unregister(net.Conn) {
 
 }
 
-func (s *SpdyTransport) Close() error {
+// Close closes the underlying spdy connection
+func (s *Transport) Close() error {
 	return s.conn.Close()
 }
 
 // NewSendChannel creates and returns a new send channel.  The receive
 // end will get picked up on the remote end through the remote calling
 // WaitReceiveChannel.
-func (s *SpdyTransport) NewSendChannel() (libchan.Sender, error) {
+func (s *Transport) NewSendChannel() (libchan.Sender, error) {
 	stream, streamErr := s.conn.CreateStream(http.Header{}, nil, false)
 	if streamErr != nil {
 		return nil, streamErr
@@ -239,7 +242,7 @@ func (s *SpdyTransport) NewSendChannel() (libchan.Sender, error) {
 
 // WaitReceiveChannel waits for a new channel be created by a remote
 // call to NewSendChannel.
-func (s *SpdyTransport) WaitReceiveChannel() (libchan.Receiver, error) {
+func (s *Transport) WaitReceiveChannel() (libchan.Receiver, error) {
 	stream, ok := <-s.streamChan
 	if !ok {
 		return nil, io.EOF
@@ -254,8 +257,9 @@ func (s *SpdyTransport) WaitReceiveChannel() (libchan.Receiver, error) {
 
 func (c *channel) createSubChannel(direction direction) (libchan.Sender, libchan.Receiver, error) {
 	if c.direction == inbound {
-		return nil, nil, errors.New("Cannot create sub channel of an input channel")
+		return nil, nil, errors.New("cannot create sub channel of an inbound channel")
 	}
+
 	stream, streamErr := c.stream.CreateSubStream(http.Header{}, false)
 	if streamErr != nil {
 		return nil, nil, streamErr
@@ -339,26 +343,26 @@ func (c *channel) Close() error {
 
 type byteStream struct {
 	Stream      io.ReadWriteCloser
-	ReferenceId uint64
+	ReferenceID uint64
 }
 
 func (b *byteStream) Read(p []byte) (n int, err error) {
 	if b == nil || b.Stream == nil {
-		return 0, errors.New("Byte stream is nil")
+		return 0, errors.New("byte stream is nil")
 	}
 	return b.Stream.Read(p)
 }
 
 func (b *byteStream) Write(data []byte) (n int, err error) {
 	if b == nil || b.Stream == nil {
-		return 0, errors.New("Byte stream is nil")
+		return 0, errors.New("byte stream is nil")
 	}
 	return b.Stream.Write(data)
 }
 
 func (b *byteStream) Close() error {
 	if b == nil || b.Stream == nil {
-		return errors.New("Byte stream is nil")
+		return errors.New("byte stream is nil")
 	}
 	return b.Stream.Close()
 }
