@@ -328,9 +328,11 @@ func (c *channel) createSubChannel(direction direction) (libchan.Sender, libchan
 		return nil, nil, streamErr
 	}
 	subChannel := &channel{
-		stream:    stream,
-		session:   c.session,
-		direction: direction,
+		referenceID: referenceID,
+		parentID:    c.referenceID,
+		stream:      stream,
+		session:     c.session,
+		direction:   direction,
 	}
 
 	c.session.channelC.L.Lock()
