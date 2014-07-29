@@ -2,6 +2,7 @@ package spdy
 
 import (
 	"io"
+	"net"
 	"os"
 	"runtime/pprof"
 	"testing"
@@ -90,16 +91,13 @@ func TestByteStreamProxy(t *testing.T) {
 	sendString := "Sending a string"
 	retString := "Returned string"
 	client := func(t *testing.T, sender libchan.Sender) {
-		bs, err := sender.CreateByteStream()
-		if err != nil {
-			t.Fatalf("Error creating byte stream: %s", err)
-		}
+		bs, bsRemote := net.Pipe()
 
 		message := &ProxiedStreamMessage{
-			Stream: bs,
+			Stream: bsRemote,
 		}
 
-		err = sender.Send(message)
+		err := sender.Send(message)
 		if err != nil {
 			t.Fatalf("Error sending message: %s", err)
 		}

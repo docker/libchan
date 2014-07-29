@@ -2,6 +2,7 @@ package spdy
 
 import (
 	"io"
+	"net"
 	"os"
 	"runtime/pprof"
 	"testing"
@@ -22,10 +23,7 @@ func TestSendFirstPipe(t *testing.T) {
 	message3 := "This was sent over a byte stream"
 	message4 := "This was ALSO sent over a byte stream"
 	client := func(t *testing.T, sender libchan.Sender) {
-		bs, err := sender.CreateByteStream()
-		if err != nil {
-			t.Fatalf("Error creating byte stream: %s", err)
-		}
+		bs, bsRemote := net.Pipe()
 
 		nestedReceiver, remoteSender, err := sender.CreateNestedReceiver()
 		if err != nil {
@@ -34,7 +32,7 @@ func TestSendFirstPipe(t *testing.T) {
 
 		m1 := &PipeMessage{
 			Message: message1,
-			Stream:  bs,
+			Stream:  bsRemote,
 			Send:    remoteSender,
 		}
 		sendErr := sender.Send(m1)

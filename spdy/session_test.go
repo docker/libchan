@@ -218,10 +218,11 @@ type MessageWithByteStream struct {
 
 func TestByteStream(t *testing.T) {
 	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
-		bs, bsErr := sender.CreateByteStream()
+		bs, bsErr := s.createByteStream()
 		if bsErr != nil {
 			t.Fatalf("Error creating byte stream: %s", bsErr)
 		}
+		//bs, bsRemote := net.Pipe()
 
 		m1 := &MessageWithByteStream{
 			Message: "with a byte stream",
@@ -239,7 +240,7 @@ func TestByteStream(t *testing.T) {
 		}
 
 		readBytes := make([]byte, 30)
-		n, readErr := m1.Stream.Read(readBytes)
+		n, readErr := bs.Read(readBytes)
 		if readErr != nil {
 			t.Fatalf("Error reading from byte stream: %s", readErr)
 		}
@@ -247,11 +248,10 @@ func TestByteStream(t *testing.T) {
 			t.Fatalf("Unexpected read value:\n\tExpected: %q\n\tActual: %q", expected, string(readBytes[:n]))
 		}
 
-		closeErr := m1.Stream.Close()
+		closeErr := bs.Close()
 		if closeErr != nil {
 			t.Fatalf("Error closing byte stream: %s", closeErr)
 		}
-
 	}
 	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
 		m1 := &MessageWithByteStream{}
@@ -262,11 +262,11 @@ func TestByteStream(t *testing.T) {
 		if m1.Stream == nil {
 			t.Fatalf("Missing byte stream")
 		}
-		bs, bsOk := m1.Stream.(*byteStream)
+		bs, bsOk := m1.Stream.(*byteStreamWrapper)
 		if !bsOk {
 			t.Fatalf("Wrong byte stream type: %T", m1.Stream)
 		}
-		if bs.Stream == nil {
+		if bs.byteStream.stream == nil {
 			t.Fatalf("Bytestream missing underlying stream")
 		}
 
@@ -306,7 +306,7 @@ func TestWrappedByteStreams(t *testing.T) {
 
 		m1 := &WrappedMessage{
 			Message: "wrapped",
-			Wrapped: libchan.ByteStreamWrapper{p2},
+			Wrapped: p2,
 		}
 
 		sendErr := sender.Send(m1)

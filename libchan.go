@@ -1,9 +1,5 @@
 package libchan
 
-import (
-	"io"
-)
-
 // Transport represents a connection which can multiplex channels and
 // bytestreams.
 type Transport interface {
@@ -26,10 +22,6 @@ type Sender interface {
 
 	// Close closes the channel.
 	Close() error
-
-	// CreateByteStream creates a new byte stream using the
-	// default byte stream type of the underlying transport.
-	CreateByteStream() (io.ReadWriteCloser, error)
 
 	// CreatePipeReceiver creates a receive-only pipe.  The sender
 	// should be sent across the channel, any call to send directly
@@ -59,13 +51,4 @@ type Receiver interface {
 	// sender from sending messages.  Normally a receiver can be
 	// automatically closed through receiving an EOF.
 	Close() error
-}
-
-// ByteStreamWrapper is a wrapper around a ReadWriteCloser
-// to cue the transport to copy to a transport byte stream.
-// Note: ReadWriteClosers created through calling the
-// CreateByteStream method on a Sender do not need
-// to wrap the ByteStream.
-type ByteStreamWrapper struct {
-	io.ReadWriteCloser
 }

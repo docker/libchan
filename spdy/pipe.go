@@ -69,7 +69,7 @@ func (p *pipeSender) Close() error {
 }
 
 func (p *pipeSender) CreateByteStream() (io.ReadWriteCloser, error) {
-	return p.sender.CreateByteStream()
+	return p.session.createByteStream()
 }
 
 func (p *pipeSender) CreateNestedReceiver() (libchan.Receiver, libchan.Sender, error) {

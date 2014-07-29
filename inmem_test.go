@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"runtime/pprof"
 	"testing"
@@ -140,20 +141,7 @@ func TestSendFile(t *testing.T) {
 	tmp.Seek(0, 0)
 
 	client := func(t *testing.T, w Sender) {
-		bs, err := w.CreateByteStream()
-		if err != nil {
-			t.Fatalf("Error creating byte stream: %s", err)
-		}
-		go func() {
-			io.Copy(bs, tmp)
-			bs.Close()
-		}()
-		go func() {
-			io.Copy(tmp, bs)
-			tmp.Close()
-		}()
-
-		message := &InMemMessage{Data: "path=" + tmp.Name(), Stream: bs}
+		message := &InMemMessage{Data: "path=" + tmp.Name(), Stream: tmp}
 		err = w.Send(message)
 		if err != nil {
 			t.Fatal(err)
@@ -201,16 +189,13 @@ func TestComplexMessage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Error creating sender: %s", err)
 		}
-		bs, err := w.CreateByteStream()
-		if err != nil {
-			t.Fatalf("Error creating bytestream: %s", err)
-		}
+		bs, bsRemote := net.Pipe()
 
 		m1 := &ComplexMessage{
 			Message:  "This is a complex message",
 			Sender:   remoteSend,
 			Receiver: remoteRecv,
-			Stream:   bs,
+			Stream:   bsRemote,
 		}
 
 		sendErr := w.Send(m1)
@@ -234,13 +219,13 @@ func TestComplexMessage(t *testing.T) {
 			t.Fatalf("Error sending return: %s", sendErr)
 		}
 
-		_, writeErr := m1.Stream.Write([]byte("Hello there server!"))
+		_, writeErr := bs.Write([]byte("Hello there server!"))
 		if writeErr != nil {
 			t.Fatalf("Error writing to byte stream: %s", writeErr)
 		}
 
 		readBytes := make([]byte, 30)
-		n, readErr := m1.Stream.Read(readBytes)
+		n, readErr := bs.Read(readBytes)
 		if readErr != nil {
 			t.Fatalf("Error reading from byte stream: %s", readErr)
 		}
@@ -248,7 +233,7 @@ func TestComplexMessage(t *testing.T) {
 			t.Fatalf("Unexpected read value:\n\tExpected: %q\n\tActual: %q", expected, string(readBytes[:n]))
 		}
 
-		closeErr := m1.Stream.Close()
+		closeErr := bs.Close()
 		if closeErr != nil {
 			t.Fatalf("Error closing byte stream: %s", closeErr)
 		}
@@ -314,7 +299,7 @@ func TestInmemWrappedSend(t *testing.T) {
 	tmp.Seek(0, 0)
 
 	client := func(t *testing.T, w Sender) {
-		message := &InMemMessage{Data: "path=" + tmp.Name(), Stream: ByteStreamWrapper{tmp}}
+		message := &InMemMessage{Data: "path=" + tmp.Name(), Stream: tmp}
 		err = w.Send(message)
 		if err != nil {
 			t.Fatal(err)

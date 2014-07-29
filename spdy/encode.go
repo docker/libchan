@@ -3,13 +3,11 @@ package spdy
 import (
 	"encoding/binary"
 	"errors"
-	"io"
 	"net"
 	"reflect"
 	"time"
 
 	"github.com/dmcgowan/go/codec"
-	"github.com/docker/libchan"
 )
 
 func (s *Transport) encodeChannel(v reflect.Value) ([]byte, error) {
@@ -64,13 +62,29 @@ func (s *Transport) decodeChannel(v reflect.Value, b []byte) error {
 	return nil
 }
 
+// Wrapper around channel to cue a copy, should not be encoded directly
+type channelWrapper struct {
+	*channel
+}
+
+// Wrapper around byte to cue a copy, should not be encoded directly
+type byteStreamWrapper struct {
+	*byteStream
+}
+
+func (s *Transport) decodeChannelWrapper(v reflect.Value, b []byte) error {
+	c := &channel{}
+	v.FieldByName("channel").Set(reflect.ValueOf(c))
+	return s.decodeChannel(reflect.ValueOf(c).Elem(), b)
+}
+
 func (s *Transport) encodeStream(v reflect.Value) ([]byte, error) {
 	bs := v.Interface().(byteStream)
-	if bs.ReferenceID == 0 {
+	if bs.referenceID == 0 {
 		return nil, errors.New("bad type")
 	}
 	var buf [8]byte
-	written := binary.PutUvarint(buf[:], uint64(bs.ReferenceID))
+	written := binary.PutUvarint(buf[:], uint64(bs.referenceID))
 
 	return buf[:written], nil
 }
@@ -89,30 +103,10 @@ func (s *Transport) decodeStream(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *Transport) encodeWrapper(v reflect.Value) ([]byte, error) {
-	wrapper := v.Interface().(libchan.ByteStreamWrapper)
-	bs, err := s.createByteStream()
-	if err != nil {
-		return nil, err
-	}
-
-	go func() {
-		io.Copy(bs, wrapper)
-		bs.Close()
-	}()
-
-	go func() {
-		io.Copy(wrapper, bs)
-		wrapper.Close()
-	}()
-
-	return s.encodeStream(reflect.ValueOf(bs).Elem())
-}
-
 func (s *Transport) decodeWrapper(v reflect.Value, b []byte) error {
 	bs := &byteStream{}
 	s.decodeStream(reflect.ValueOf(bs).Elem(), b)
-	v.FieldByName("ReadWriteCloser").Set(reflect.ValueOf(bs))
+	v.FieldByName("byteStream").Set(reflect.ValueOf(bs))
 	return nil
 }
 
@@ -237,17 +231,23 @@ func (s *Transport) decodeNetConn(v reflect.Value, b []byte) error {
 func (s *Transport) initializeHandler() *codec.MsgpackHandle {
 	mh := &codec.MsgpackHandle{WriteExt: true}
 	mh.RawToString = true
-	err := mh.AddExt(reflect.TypeOf(channel{}), 0x01, s.encodeChannel, s.decodeChannel)
+	err := mh.AddExt(reflect.TypeOf(channelWrapper{}), 0x01, nil, s.decodeChannelWrapper)
 	if err != nil {
 		panic(err)
 	}
 
-	err = mh.AddExt(reflect.TypeOf(byteStream{}), 0x02, s.encodeStream, s.decodeStream)
+	err = mh.AddExt(reflect.TypeOf(channel{}), 0x01, s.encodeChannel, nil)
 	if err != nil {
 		panic(err)
 	}
 
-	err = mh.AddExt(reflect.TypeOf(libchan.ByteStreamWrapper{}), 0x03, s.encodeWrapper, s.decodeWrapper)
+	err = mh.AddExt(reflect.TypeOf(byteStreamWrapper{}), 0x02, nil, s.decodeWrapper)
+	if err != nil {
+		panic(err)
+	}
+
+	// never decode directly,  ensures byte streams are always wrapped
+	err = mh.AddExt(reflect.TypeOf(byteStream{}), 0x02, s.encodeStream, nil)
 	if err != nil {
 		panic(err)
 	}
