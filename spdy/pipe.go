@@ -17,7 +17,7 @@ type pipeReceiver struct {
 	receiver libchan.Receiver
 }
 
-// Pipe creates a channel pipe using an in memory transport.
+// Pipe creates a top-level channel pipe using an in memory transport.
 func Pipe() (libchan.Sender, libchan.Receiver, error) {
 	c1, c2 := net.Pipe()
 
@@ -72,22 +72,6 @@ func (p *pipeSender) CreateByteStream() (io.ReadWriteCloser, error) {
 	return p.session.createByteStream()
 }
 
-func (p *pipeSender) CreateNestedReceiver() (libchan.Receiver, libchan.Sender, error) {
-	return p.sender.CreateNestedReceiver()
-}
-
-func (p *pipeSender) CreateNestedSender() (libchan.Sender, libchan.Receiver, error) {
-	return p.sender.CreateNestedSender()
-}
-
 func (p *pipeReceiver) Receive(message interface{}) error {
 	return p.receiver.Receive(message)
-}
-
-func (p *pipeReceiver) Close() error {
-	err := p.receiver.Close()
-	if err != nil {
-		return err
-	}
-	return p.session.Close()
 }

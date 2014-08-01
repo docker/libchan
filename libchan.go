@@ -22,16 +22,6 @@ type Sender interface {
 
 	// Close closes the channel.
 	Close() error
-
-	// CreatePipeReceiver creates a receive-only pipe.  The sender
-	// should be sent across the channel, any call to send directly
-	// will throw an error on any channel on a transport.
-	CreateNestedReceiver() (Receiver, Sender, error)
-
-	// CreateNestedSender creates a send-only pipe.  The receiver
-	// should be sent across the channel, any call to receive directly
-	// will throw an error on any channel on a transport.
-	CreateNestedSender() (Sender, Receiver, error)
 }
 
 // Receiver is a channel which can receive messages of any
@@ -46,9 +36,4 @@ type Receiver interface {
 	// the receive object is incompatible, Receiver will
 	// throw an error.
 	Receive(message interface{}) error
-
-	// Close closes the channel.  Closing does not keep the remote
-	// sender from sending messages.  Normally a receiver can be
-	// automatically closed through receiving an EOF.
-	Close() error
 }

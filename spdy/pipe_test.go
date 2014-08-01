@@ -25,10 +25,7 @@ func TestSendFirstPipe(t *testing.T) {
 	client := func(t *testing.T, sender libchan.Sender) {
 		bs, bsRemote := net.Pipe()
 
-		nestedReceiver, remoteSender, err := sender.CreateNestedReceiver()
-		if err != nil {
-			t.Fatalf("Error creating nested receiver: %s", err)
-		}
+		nestedReceiver, remoteSender := libchan.Pipe()
 
 		m1 := &PipeMessage{
 			Message: message1,
@@ -62,11 +59,6 @@ func TestSendFirstPipe(t *testing.T) {
 		}
 		if string(readData) != message4 {
 			t.Fatalf("Unexpected message\n\tExpected: %s\n\tActual: %s", message4, string(readData))
-		}
-
-		closeErr := nestedReceiver.Close()
-		if closeErr != nil {
-			t.Fatalf("Error closing nested receiver: %s", closeErr)
 		}
 	}
 	server := func(t *testing.T, receiver libchan.Receiver) {
@@ -132,10 +124,6 @@ func SpawnPipeTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverRo
 	go func() {
 		defer close(endServer)
 		server(t, receiver)
-		err := receiver.Close()
-		if err != nil {
-			t.Fatalf("Error closing receiver: %s", err)
-		}
 	}()
 
 	timeout := time.After(ClientServerTimeout)

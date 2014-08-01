@@ -19,13 +19,10 @@ type InMemMessage struct {
 
 func TestInmemRetPipe(t *testing.T) {
 	client := func(t *testing.T, w Sender) {
-		ret, retPipe, err := w.CreateNestedReceiver()
-		if err != nil {
-			t.Fatal(err)
-		}
+		ret, retPipe := Pipe()
 		message := &InMemMessage{Data: "hello", Ret: retPipe}
 
-		err = w.Send(message)
+		err := w.Send(message)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -85,12 +82,9 @@ func TestSimpleSend(t *testing.T) {
 
 func TestSendReply(t *testing.T) {
 	client := func(t *testing.T, w Sender) {
-		ret, retPipe, err := w.CreateNestedReceiver()
-		if err != nil {
-			t.Fatal(err)
-		}
+		ret, retPipe := Pipe()
 		message := &InMemMessage{Data: "this is the request", Ret: retPipe}
-		err = w.Send(message)
+		err := w.Send(message)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -181,14 +175,8 @@ type SimpleMessage struct {
 
 func TestComplexMessage(t *testing.T) {
 	client := func(t *testing.T, w Sender) {
-		send, remoteRecv, err := w.CreateNestedSender()
-		if err != nil {
-			t.Fatalf("Error creating sender: %s", err)
-		}
-		recv, remoteSend, err := w.CreateNestedReceiver()
-		if err != nil {
-			t.Fatalf("Error creating sender: %s", err)
-		}
+		remoteRecv, send := Pipe()
+		recv, remoteSend := Pipe()
 		bs, bsRemote := net.Pipe()
 
 		m1 := &ComplexMessage{
@@ -350,10 +338,6 @@ func SpawnPipeTestRoutines(t *testing.T, s SendTestRoutine, r ReceiveTestRoutine
 	go func() {
 		defer close(end2)
 		r(t, receiver)
-		err := receiver.Close()
-		if err != nil {
-			t.Fatalf("Error closing receiver: %s", err)
-		}
 	}()
 
 	timeout := time.After(RoutineTimeout)

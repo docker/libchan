@@ -30,17 +30,14 @@ func TestChannelProxy(t *testing.T) {
 	}
 	client := func(t *testing.T, sender libchan.Sender) {
 		for i, m := range messages {
-			nestedReceiver, remoteSender, err := sender.CreateNestedReceiver()
-			if err != nil {
-				t.Fatalf("Error creating nested receiver: %s", err)
-			}
+			nestedReceiver, remoteSender := libchan.Pipe()
 
 			message := &ProxiedMessage{
 				Message: m,
 				Ret:     remoteSender,
 			}
 
-			err = sender.Send(message)
+			err := sender.Send(message)
 			if err != nil {
 				t.Fatalf("Error sending message: %s", err)
 			}
@@ -173,10 +170,6 @@ func SpawnProxyTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverR
 	go func() {
 		defer close(endServer)
 		server(t, receiver2)
-		err := receiver2.Close()
-		if err != nil {
-			t.Errorf("Error closing receiver: %s", err)
-		}
 	}()
 
 	timeout := time.After(ClientServerTimeout)
