@@ -1,206 +1,389 @@
 package libchan
 
 import (
+	"encoding/binary"
+	"errors"
 	"io"
+	"net"
+	"reflect"
 	"sync"
+
+	"github.com/dmcgowan/go/codec"
 )
 
-func Pipe() (*PipeReceiver, *PipeSender) {
-	p := new(pipe)
-	p.rwait.L = &p.l
-	p.wwait.L = &p.l
-	r := &PipeReceiver{p}
-	w := &PipeSender{p}
-	return r, w
+// Pipe returns an inmemory Sender/Receiver pair.
+func Pipe() (Receiver, Sender) {
+	session := createStreamSession()
+	return session.createPipe()
 }
 
-type pipe struct {
-	rwait sync.Cond
-	wwait sync.Cond
-	l     sync.Mutex
-	rl    sync.Mutex
-	wl    sync.Mutex
-	rerr  error // if reader closed, error to give writes
-	werr  error // if writer closed, error to give reads
-	msg   *Message
+type streamSession struct {
+	pipeLock    sync.Mutex
+	pipeCount   uint64
+	pipeReaders map[uint64]*io.PipeReader
+	pipeWriters map[uint64]*io.PipeWriter
+
+	handler codec.Handle
+
+	referenceLock sync.Mutex
+	referenceID   uint64
+	byteStreams   map[uint64]*byteStream
 }
 
-func (p *pipe) psend(msg *Message) error {
-	var err error
-	// One writer at a time.
-	p.wl.Lock()
-	defer p.wl.Unlock()
-
-	p.l.Lock()
-	defer p.l.Unlock()
-	p.msg = msg
-	p.rwait.Signal()
-	for {
-		if p.msg == nil {
-			break
-		}
-		if p.rerr != nil {
-			err = p.rerr
-			break
-		}
-		if p.werr != nil {
-			err = io.ErrClosedPipe
-		}
-		p.wwait.Wait()
+func createStreamSession() *streamSession {
+	session := &streamSession{
+		pipeReaders: make(map[uint64]*io.PipeReader),
+		pipeWriters: make(map[uint64]*io.PipeWriter),
+		referenceID: 2,
+		byteStreams: make(map[uint64]*byteStream),
 	}
-	p.msg = nil // in case of rerr or werr
-	return err
+	session.handler = getMsgPackHandler(session)
+	return session
 }
 
-func (p *pipe) send(msg *Message) (ret Receiver, err error) {
-	// Prepare nested Receiver if requested
-	if RetPipe.Equals(msg.Ret) {
-		ret, msg.Ret = Pipe()
+func (s *streamSession) createPipe() (Receiver, Sender) {
+	r, w := io.Pipe()
+	s.pipeLock.Lock()
+	pipeID := s.pipeCount + 1
+	s.pipeCount = pipeID
+	s.pipeReaders[pipeID] = r
+	s.pipeWriters[pipeID] = w
+	s.pipeLock.Unlock()
+
+	recv := &pipeReceiver{pipeID, s, r, codec.NewDecoder(r, s.handler)}
+	send := &pipeSender{pipeID, s, w, codec.NewEncoder(w, s.handler)}
+	return recv, send
+}
+
+func (s *streamSession) newByteStream() (io.ReadWriteCloser, error) {
+	c1, c2 := net.Pipe()
+	bs := &byteStream{
+		Conn:        c1,
+		referenceID: s.referenceID,
+		session:     s,
 	}
-	err = p.psend(msg)
-	return
-}
-
-func (p *pipe) preceive() (*Message, error) {
-	p.rl.Lock()
-	defer p.rl.Unlock()
-
-	p.l.Lock()
-	defer p.l.Unlock()
-	for {
-		if p.rerr != nil {
-			return nil, io.ErrClosedPipe
-		}
-		if p.msg != nil {
-			break
-		}
-		if p.werr != nil {
-			return nil, p.werr
-		}
-		p.rwait.Wait()
+	s.referenceLock.Lock()
+	s.byteStreams[s.referenceID] = bs
+	s.byteStreams[s.referenceID+1] = &byteStream{
+		Conn:        c2,
+		referenceID: s.referenceID + 1,
+		session:     s,
 	}
-	msg := p.msg
-	p.msg = nil
-	p.wwait.Signal()
-	return msg, nil
+	s.referenceID = s.referenceID + 2
+	s.referenceLock.Unlock()
+
+	return bs, nil
 }
 
-func (p *pipe) receive(mode int) (*Message, error) {
-	msg, err := p.preceive()
+func (s *streamSession) encodeReceiver(v reflect.Value) ([]byte, error) {
+	bs := v.Interface().(pipeReceiver)
+	if bs.pipeID == 0 {
+		return nil, errors.New("bad type")
+	}
+	var buf [8]byte
+	written := binary.PutUvarint(buf[:], uint64(bs.pipeID))
+
+	return buf[:written], nil
+}
+
+func (s *streamSession) decodeReceiver(v reflect.Value, b []byte) error {
+	pipeID, readN := binary.Uvarint(b)
+	if readN == 0 {
+		return errors.New("bad reference id")
+	}
+
+	r, ok := s.pipeReaders[pipeID]
+	if !ok {
+		return errors.New("receiver does not exist")
+	}
+
+	v.Set(reflect.ValueOf(pipeReceiver{pipeID, s, r, codec.NewDecoder(r, s.handler)}))
+
+	return nil
+}
+
+func (s *streamSession) encodeSender(v reflect.Value) ([]byte, error) {
+	sender := v.Interface().(pipeSender)
+	if sender.pipeID == 0 {
+		return nil, errors.New("bad type")
+	}
+	var buf [8]byte
+	written := binary.PutUvarint(buf[:], uint64(sender.pipeID))
+
+	return buf[:written], nil
+}
+
+func (s *streamSession) decodeSender(v reflect.Value, b []byte) error {
+	pipeID, readN := binary.Uvarint(b)
+	if readN == 0 {
+		return errors.New("bad reference id")
+	}
+
+	w, ok := s.pipeWriters[pipeID]
+	if !ok {
+		return errors.New("receiver does not exist")
+	}
+
+	v.Set(reflect.ValueOf(pipeSender{pipeID, s, w, codec.NewEncoder(w, s.handler)}))
+
+	return nil
+}
+
+func (s *streamSession) encodeStream(v reflect.Value) ([]byte, error) {
+	bs := v.Interface().(byteStream)
+	if bs.referenceID == 0 {
+		return nil, errors.New("bad type")
+	}
+	var buf [8]byte
+	written := binary.PutUvarint(buf[:], uint64(bs.referenceID)^0x01)
+
+	return buf[:written], nil
+}
+
+func (s *streamSession) decodeStream(v reflect.Value, b []byte) error {
+	referenceID, readN := binary.Uvarint(b)
+	if readN == 0 {
+		return errors.New("bad reference id")
+	}
+
+	bs, ok := s.byteStreams[referenceID]
+	if !ok {
+		return errors.New("byte stream does not exist")
+	}
+
+	if bs != nil {
+		v.Set(reflect.ValueOf(*bs))
+	}
+
+	return nil
+}
+
+// Wrappers to cue a copy of a previously decoded object
+
+type pipeSenderWrapper struct{ *pipeSender }
+type pipeReceiverWrapper struct{ *pipeReceiver }
+type byteStreamWrapper struct{ *byteStream }
+
+func (s *streamSession) decodeSenderWrapper(v reflect.Value, b []byte) error {
+	ps := &pipeSender{}
+	v.FieldByName("pipeSender").Set(reflect.ValueOf(ps))
+	return s.decodeSender(reflect.ValueOf(ps).Elem(), b)
+}
+
+func (s *streamSession) decodeReceiverWrapper(v reflect.Value, b []byte) error {
+	pr := &pipeReceiver{}
+	v.FieldByName("pipeReceiver").Set(reflect.ValueOf(pr))
+	return s.decodeReceiver(reflect.ValueOf(pr).Elem(), b)
+}
+
+func (s *streamSession) decodeByteStreamWrapper(v reflect.Value, b []byte) error {
+	bs := &byteStream{}
+	v.FieldByName("byteStream").Set(reflect.ValueOf(bs))
+	return s.decodeStream(reflect.ValueOf(bs).Elem(), b)
+}
+
+// Internal definitions early, does not follow protocol because does not
+// interact with external processes
+func getMsgPackHandler(session *streamSession) *codec.MsgpackHandle {
+	mh := &codec.MsgpackHandle{WriteExt: true}
+	mh.RawToString = true
+
+	err := mh.AddExt(reflect.TypeOf(pipeReceiverWrapper{}), 1, nil, session.decodeReceiverWrapper)
+	if err != nil {
+		panic(err)
+	}
+
+	err = mh.AddExt(reflect.TypeOf(pipeReceiver{}), 1, session.encodeReceiver, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	err = mh.AddExt(reflect.TypeOf(pipeSenderWrapper{}), 2, nil, session.decodeSenderWrapper)
+	if err != nil {
+		panic(err)
+	}
+
+	err = mh.AddExt(reflect.TypeOf(pipeSender{}), 2, session.encodeSender, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	err = mh.AddExt(reflect.TypeOf(byteStreamWrapper{}), 3, nil, session.decodeByteStreamWrapper)
+	if err != nil {
+		panic(err)
+	}
+
+	err = mh.AddExt(reflect.TypeOf(byteStream{}), 3, session.encodeStream, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	return mh
+}
+
+type pipeSender struct {
+	pipeID  uint64
+	session *streamSession
+	p       *io.PipeWriter
+	encoder *codec.Encoder
+}
+
+func (w *pipeSender) Send(message interface{}) error {
+	mCopy, mErr := w.copyMessage(message)
+	if mErr != nil {
+		return mErr
+	}
+	return w.encoder.Encode(mCopy)
+}
+
+func (w *pipeSender) Close() error {
+	return w.p.Close()
+}
+
+func (w *pipeSender) CreateByteStream() (io.ReadWriteCloser, error) {
+	return w.session.newByteStream()
+}
+
+func (w *pipeSender) CreateNestedReceiver() (Receiver, Sender, error) {
+	recv, send := w.session.createPipe()
+	return recv, send, nil
+
+}
+
+func (w *pipeSender) CreateNestedSender() (Sender, Receiver, error) {
+	recv, send := w.session.createPipe()
+	return send, recv, nil
+}
+
+type pipeReceiver struct {
+	pipeID  uint64
+	session *streamSession
+	p       *io.PipeReader
+	decoder *codec.Decoder
+}
+
+func (r *pipeReceiver) Receive(message interface{}) error {
+	return r.decoder.Decode(message)
+}
+
+func (r *pipeReceiver) Close() error {
+	return r.p.Close()
+}
+
+type byteStream struct {
+	net.Conn
+	referenceID uint64
+	session     *streamSession
+}
+
+func (w *pipeSender) copyMessage(message interface{}) (interface{}, error) {
+	mapCopy, mapOk := message.(map[string]interface{})
+	if mapOk {
+		return w.copyChannelMessage(mapCopy)
+	}
+	return w.copyStructure(message)
+}
+
+func (w *pipeSender) copyValue(v interface{}) (interface{}, error) {
+	switch val := v.(type) {
+	case *byteStream:
+		if val.session != w.session {
+			return w.copyByteStream(val)
+		}
+	case *pipeSender:
+		if val.session != w.session {
+			return w.copySender(val)
+		}
+	case *pipeReceiver:
+		if val.session != w.session {
+			return w.copyReceiver(val)
+		}
+	case io.ReadWriteCloser:
+		return w.copyByteStream(val)
+	case Sender:
+		return w.copySender(val)
+	case Receiver:
+		return w.copyReceiver(val)
+	case map[string]interface{}:
+		return w.copyChannelMessage(val)
+	case struct{}:
+		return w.copyStructure(v)
+	case *struct{}:
+		return w.copyStructure(v)
+	default:
+	}
+	return v, nil
+}
+
+func (w *pipeSender) copySender(val Sender) (Sender, error) {
+	recv, send, err := w.CreateNestedReceiver()
 	if err != nil {
 		return nil, err
 	}
-	if msg.Ret == nil {
-		msg.Ret = NopSender{}
-	}
-	if mode&Ret == 0 {
-		msg.Ret.Close()
-	}
-	return msg, nil
+	go func() {
+		Copy(val, recv)
+		val.Close()
+	}()
+	return send, nil
 }
 
-func (p *pipe) rclose(err error) {
-	if err == nil {
-		err = io.ErrClosedPipe
+func (w *pipeSender) copyReceiver(val Receiver) (Receiver, error) {
+	send, recv, err := w.CreateNestedSender()
+	if err != nil {
+		return nil, err
 	}
-	p.l.Lock()
-	defer p.l.Unlock()
-	p.rerr = err
-	p.rwait.Signal()
-	p.wwait.Signal()
+	go func() {
+		Copy(send, val)
+		send.Close()
+	}()
+	return recv, nil
 }
 
-func (p *pipe) wclose(err error) {
-	if err == nil {
-		err = io.EOF
+func (w *pipeSender) copyByteStream(stream io.ReadWriteCloser) (io.ReadWriteCloser, error) {
+	streamCopy, err := w.session.newByteStream()
+	if err != nil {
+		return nil, err
 	}
-	p.l.Lock()
-	defer p.l.Unlock()
-	p.werr = err
-	p.rwait.Signal()
-	p.wwait.Signal()
+	go func() {
+		io.Copy(streamCopy, stream)
+		streamCopy.Close()
+	}()
+	go func() {
+		io.Copy(stream, streamCopy)
+		stream.Close()
+	}()
+	return streamCopy, nil
 }
 
-// PipeReceiver
-
-type PipeReceiver struct {
-	p *pipe
-}
-
-func (r *PipeReceiver) Receive(mode int) (*Message, error) {
-	return r.p.receive(mode)
-}
-
-func (r *PipeReceiver) SendTo(dst Sender) (int, error) {
-	var n int
-	// If the destination is a PipeSender, we can cheat
-	pdst, ok := dst.(*PipeSender)
-	if !ok {
-		return 0, ErrIncompatibleSender
-	}
-	for {
-		pmsg, err := r.p.preceive()
-		if err == io.EOF {
-			break
+func (w *pipeSender) copyChannelMessage(m map[string]interface{}) (interface{}, error) {
+	mCopy := make(map[string]interface{})
+	for k, v := range m {
+		vCopy, vErr := w.copyValue(v)
+		if vErr != nil {
+			return nil, vErr
 		}
-		if err != nil {
-			return n, err
-		}
-		if err := pdst.p.psend(pmsg); err != nil {
-			return n, err
-		}
+		mCopy[k] = vCopy
 	}
-	n++
-	return n, nil
+
+	return mCopy, nil
 }
 
-func (r *PipeReceiver) Close() error {
-	return r.CloseWithError(nil)
-}
-
-func (r *PipeReceiver) CloseWithError(err error) error {
-	r.p.rclose(err)
-	return nil
-}
-
-// PipeSender
-
-type PipeSender struct {
-	p *pipe
-}
-
-func (w *PipeSender) Send(msg *Message) (Receiver, error) {
-	return w.p.send(msg)
-}
-
-func (w *PipeSender) ReceiveFrom(src Receiver) (int, error) {
-	var n int
-	// If the destination is a PipeReceiver, we can cheat
-	psrc, ok := src.(*PipeReceiver)
-	if !ok {
-		return 0, ErrIncompatibleReceiver
+func (w *pipeSender) copyStructure(m interface{}) (interface{}, error) {
+	v := reflect.ValueOf(m)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
 	}
-	for {
-		pmsg, err := psrc.p.preceive()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return n, err
-		}
-		if err := w.p.psend(pmsg); err != nil {
-			return n, err
-		}
-		n++
+	if v.Kind() != reflect.Struct {
+		return nil, errors.New("invalid non struct type")
 	}
-	return n, nil
-}
-
-func (w *PipeSender) Close() error {
-	return w.CloseWithError(nil)
-}
-
-func (w *PipeSender) CloseWithError(err error) error {
-	w.p.wclose(err)
-	return nil
+	mCopy := make(map[string]interface{})
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		vCopy, vErr := w.copyValue(v.Field(i).Interface())
+		if vErr != nil {
+			return nil, vErr
+		}
+		mCopy[t.Field(i).Name] = vCopy
+	}
+	return mCopy, nil
 }

@@ -2,36 +2,29 @@ package libchan
 
 import (
 	"io"
-	"sync"
 )
 
-func Copy(dst Sender, src Receiver) (int, error) {
-	var tasks sync.WaitGroup
-	defer tasks.Wait()
-	if senderTo, ok := src.(SenderTo); ok {
-		if n, err := senderTo.SendTo(dst); err != ErrIncompatibleSender {
-			return n, err
-		}
-	}
-	if receiverFrom, ok := dst.(ReceiverFrom); ok {
-		if n, err := receiverFrom.ReceiveFrom(src); err != ErrIncompatibleReceiver {
-			return n, err
-		}
-	}
-	var (
-		n int
-	)
+// Copy copies from a receiver to a sender until an EOF is
+// received.  The number of copies made is returned along
+// with any error that may have halted copying prior to an EOF.
+func Copy(w Sender, r Receiver) (int, error) {
+	var n int
 	for {
-		msg, err := src.Receive(Ret)
-		if err == io.EOF {
-			return n, nil
-		}
+		m := make(map[string]interface{})
+		err := r.Receive(&m)
 		if err != nil {
-			return n, err
+			if err == io.EOF {
+				break
+			} else {
+				return n, err
+			}
 		}
-		if _, err := dst.Send(msg); err != nil {
+
+		err = w.Send(m)
+		if err != nil {
 			return n, err
 		}
 		n++
 	}
+	return n, nil
 }

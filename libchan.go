@@ -1,62 +1,39 @@
 package libchan
 
-import (
-	"errors"
-	"os"
-)
+// Transport represents a connection which can multiplex channels and
+// bytestreams.
+type Transport interface {
+	// NewSendChannel creates and returns a new send channel.  The receive
+	// end will get picked up on the remote end of the transport through
+	// the remote calling WaitReceiveChannel.
+	NewSendChannel() (Sender, error)
 
+	// WaitReceiveChannel waits for a new channel be created by the
+	// remote end of the transport calling NewSendChannel.
+	WaitReceiveChannel() (Receiver, error)
+}
+
+// Sender is a channel which sent messages of any content
+// including other channels and bytestreams.
 type Sender interface {
-	Send(msg *Message) (Receiver, error)
+	// Send sends a message across the channel to a receiver on the
+	// other side of the underlying transport.
+	Send(message interface{}) error
+
+	// Close closes the channel.
 	Close() error
 }
 
+// Receiver is a channel which can receive messages of any
+// content including other channels and bytestreams.
 type Receiver interface {
-	Receive(mode int) (*Message, error)
-}
-
-type Message struct {
-	Data []byte
-	Fd   *os.File
-	Ret  Sender
-}
-
-const (
-	Ret int = 1 << iota
-	// FIXME: use an `Att` flag to auto-close attachments by default
-)
-
-type ReceiverFrom interface {
-	ReceiveFrom(Receiver) (int, error)
-}
-
-type SenderTo interface {
-	SendTo(Sender) (int, error)
-}
-
-var (
-	ErrIncompatibleSender   = errors.New("incompatible sender")
-	ErrIncompatibleReceiver = errors.New("incompatible receiver")
-)
-
-// RetPipe is a special value for `Message.Ret`.
-// When a Message is sent with `Ret=SendPipe`, the transport must
-// substitute it with the writing end of a new pipe, and return the
-// other end as a return value.
-type retPipe struct {
-	NopSender
-}
-
-var RetPipe = retPipe{}
-
-func (r retPipe) Equals(val Sender) bool {
-	if rval, ok := val.(retPipe); ok {
-		return rval == r
-	}
-	return false
-}
-
-func Repeater(payload *Message) Sender {
-	return Handler(func(msg *Message) {
-		msg.Ret.Send(payload)
-	})
+	// Receive receives a message sent across the channel from
+	// a sender on the other side of the underlying transport.
+	// Receive is expected to receive the same object that was
+	// sent by the Sender, any differences between the
+	// receive and send type should be handled carefully.  It is
+	// up to the application to determine type compatibility, if
+	// the receive object is incompatible, Receiver will
+	// throw an error.
+	Receive(message interface{}) error
 }
