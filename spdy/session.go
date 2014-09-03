@@ -134,7 +134,7 @@ func newSession(conn net.Conn, server bool) (*Transport, error) {
 // rather than a var to allow insertion of time elapsed
 // dynamically.
 func (s *Transport) errDeadSession() error {
-	return errors.New(fmt.Sprintf("session appears dead no response after %v", s.HeartbeatInterval * time.Duration(s.HeartbeatLimit)))
+	return errors.New(fmt.Sprintf("session appears dead no response after %v", s.HeartbeatInterval*time.Duration(s.HeartbeatLimit)))
 }
 
 func (s *Transport) monitorHeartbeat() {
