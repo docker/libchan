@@ -38,6 +38,10 @@ func (c *channel) copyValue(v interface{}) (interface{}, error) {
 		// Do nothing until socket support is added
 	case io.ReadWriteCloser:
 		return c.copyByteStream(val)
+	case io.ReadCloser:
+		return c.copyByteReadStream(val)
+	case io.WriteCloser:
+		return c.copyByteWriteStream(val)
 	case libchan.Sender:
 		return c.copySender(val)
 	case libchan.Receiver:
@@ -86,6 +90,31 @@ func (c *channel) copyByteStream(stream io.ReadWriteCloser) (io.ReadWriteCloser,
 		io.Copy(streamCopy, stream)
 		streamCopy.Close()
 	}()
+	go func() {
+		io.Copy(stream, streamCopy)
+		stream.Close()
+	}()
+	return streamCopy, nil
+}
+
+func (c *channel) copyByteReadStream(stream io.ReadCloser) (io.ReadCloser, error) {
+	streamCopy, err := c.session.createByteStream()
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		io.Copy(streamCopy, stream)
+		streamCopy.Close()
+		stream.Close()
+	}()
+	return streamCopy, nil
+}
+
+func (c *channel) copyByteWriteStream(stream io.WriteCloser) (io.WriteCloser, error) {
+	streamCopy, err := c.session.createByteStream()
+	if err != nil {
+		return nil, err
+	}
 	go func() {
 		io.Copy(stream, streamCopy)
 		stream.Close()

@@ -300,6 +300,10 @@ func (w *pipeSender) copyValue(v interface{}) (interface{}, error) {
 		}
 	case io.ReadWriteCloser:
 		return w.copyByteStream(val)
+	case io.ReadCloser:
+		return w.copyByteReadStream(val)
+	case io.WriteCloser:
+		return w.copyByteWriteStream(val)
 	case Sender:
 		return w.copySender(val)
 	case Receiver:
@@ -348,6 +352,31 @@ func (w *pipeSender) copyByteStream(stream io.ReadWriteCloser) (io.ReadWriteClos
 		io.Copy(streamCopy, stream)
 		streamCopy.Close()
 	}()
+	go func() {
+		io.Copy(stream, streamCopy)
+		stream.Close()
+	}()
+	return streamCopy, nil
+}
+
+func (w *pipeSender) copyByteReadStream(stream io.ReadCloser) (io.ReadCloser, error) {
+	streamCopy, err := w.session.newByteStream()
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		io.Copy(streamCopy, stream)
+		streamCopy.Close()
+		stream.Close()
+	}()
+	return streamCopy, nil
+}
+
+func (w *pipeSender) copyByteWriteStream(stream io.WriteCloser) (io.WriteCloser, error) {
+	streamCopy, err := w.session.newByteStream()
+	if err != nil {
+		return nil, err
+	}
 	go func() {
 		io.Copy(stream, streamCopy)
 		stream.Close()
