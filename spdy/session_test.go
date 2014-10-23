@@ -284,6 +284,156 @@ func TestWrappedByteStreams(t *testing.T) {
 	SpawnClientServerTest(t, "localhost:12943", ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
+type ReceiverMessage struct {
+	Message  string
+	Receiver libchan.Receiver
+}
+
+func TestSubChannel(t *testing.T) {
+	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
+		remote1, send1 := libchan.Pipe()
+		m1 := &ReceiverMessage{
+			Message:  "WithReceiver",
+			Receiver: remote1,
+		}
+		if sendErr := sender.Send(m1); sendErr != nil {
+			t.Fatalf("Error sending ReceiverMessage: %s", sendErr)
+		}
+
+		remote2, send2 := libchan.Pipe()
+		m2 := &ReceiverMessage{
+			Message:  "Nested",
+			Receiver: remote2,
+		}
+		if sendErr := send1.Send(m2); sendErr != nil {
+			t.Fatalf("Error sending ReceiverMessage: %s", sendErr)
+		}
+
+		m3 := &SimpleMessage{"This is a simple message"}
+		if sendErr := send2.Send(m3); sendErr != nil {
+			t.Fatalf("Error sending simple message: %s", sendErr)
+		}
+
+		if closeErr := send1.Close(); closeErr != nil {
+			t.Fatalf("Error closing send1: %s", closeErr)
+		}
+
+		if closeErr := send2.Close(); closeErr != nil {
+			t.Fatalf("Error closing send2: %s", closeErr)
+		}
+	}
+	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
+		m1 := &ReceiverMessage{}
+		if receiveErr := receiver.Receive(m1); receiveErr != nil {
+			t.Fatalf("Error receiving ReceiverMessage: %s", receiveErr)
+		}
+
+		if expected := "WithReceiver"; m1.Message != expected {
+			t.Fatalf("Unexpected message\n\tExpected: %s\n\tActual: %s", expected, m1.Message)
+		}
+
+		if m1.Receiver == nil {
+			t.Fatalf("Receiver is nil")
+		}
+
+		m2 := &ReceiverMessage{}
+		if receiveErr := m1.Receiver.Receive(m2); receiveErr != nil {
+			t.Fatalf("Error receiving ReceiverMessage: %s", receiveErr)
+		}
+		if expected := "Nested"; m2.Message != expected {
+			t.Fatalf("Unexpected message value:\n\tExpected: %s\n\tActual: %s", expected, m2.Message)
+		}
+
+		if m2.Receiver == nil {
+			t.Fatalf("Receiver is nil")
+		}
+
+		m3 := &SimpleMessage{}
+		if receiverErr := m2.Receiver.Receive(m3); receiverErr != nil {
+			t.Fatalf("Error receiving SimpleMessage: %s", receiverErr)
+		}
+		if expected := "This is a simple message"; m3.Message != expected {
+			t.Fatalf("Unexpected message value:\n\tExpected: %s\n\tActual: %s", expected, m3.Message)
+		}
+	}
+	SpawnClientServerTest(t, "localhost:12845", ClientSendWrapper(client), ServerReceiveWrapper(server))
+}
+
+type SenderMessage struct {
+	Message string
+	Sender  libchan.Sender
+}
+
+func TestSenderSubChannel(t *testing.T) {
+	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
+		recv, remote1 := libchan.Pipe()
+		m1 := &SenderMessage{
+			Message: "WithSender",
+			Sender:  remote1,
+		}
+		if sendErr := sender.Send(m1); sendErr != nil {
+			t.Fatalf("Error sending SenderMessage: %s", sendErr)
+		}
+
+		m2 := &SenderMessage{}
+		if receiveErr := recv.Receive(m2); receiveErr != nil {
+			t.Fatalf("Error receiving ReceiverMessage: %s", receiveErr)
+		}
+		if expected := "Nested"; m2.Message != expected {
+			t.Fatalf("Unexpected message value:\n\tExpected: %s\n\tActual: %s", expected, m2.Message)
+		}
+
+		if m2.Sender == nil {
+			t.Fatalf("Receiver is nil")
+		}
+
+		m3 := &SimpleMessage{"This is a simple message"}
+		if sendErr := m2.Sender.Send(m3); sendErr != nil {
+			t.Fatalf("Error sending simple message: %s", sendErr)
+		}
+
+		if closeErr := m2.Sender.Close(); closeErr != nil {
+			t.Fatalf("Error closing send2: %s", closeErr)
+		}
+	}
+	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
+		m1 := &SenderMessage{}
+		if receiveErr := receiver.Receive(m1); receiveErr != nil {
+			t.Fatalf("Error receiving SenderMessage: %s", receiveErr)
+		}
+
+		if expected := "WithSender"; m1.Message != expected {
+			t.Fatalf("Unexpected message\n\tExpected: %s\n\tActual: %s", expected, m1.Message)
+		}
+
+		if m1.Sender == nil {
+			t.Fatalf("Receiver is nil")
+		}
+
+		recv, remote := libchan.Pipe()
+		m2 := &SenderMessage{
+			Message: "Nested",
+			Sender:  remote,
+		}
+		if sendErr := m1.Sender.Send(m2); sendErr != nil {
+			t.Fatalf("Error sending SenderMessage: %s", sendErr)
+		}
+
+		m3 := &SimpleMessage{}
+		if receiverErr := recv.Receive(m3); receiverErr != nil {
+			t.Fatalf("Error receiving SimpleMessage: %s", receiverErr)
+		}
+		if expected := "This is a simple message"; m3.Message != expected {
+			t.Fatalf("Unexpected message value:\n\tExpected: %s\n\tActual: %s", expected, m3.Message)
+		}
+
+		if closeErr := m1.Sender.Close(); closeErr != nil {
+			t.Fatalf("Error closing send1: %s", closeErr)
+		}
+
+	}
+	SpawnClientServerTest(t, "localhost:12845", ClientSendWrapper(client), ServerReceiveWrapper(server))
+}
 func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s *Transport)) ClientRoutine {
 	return func(t *testing.T, server string) {
 		conn, connErr := net.Dial("tcp", server)

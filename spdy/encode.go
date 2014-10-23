@@ -10,6 +10,28 @@ import (
 	"github.com/dmcgowan/go/codec"
 )
 
+func decodeReferenceID(b []byte) (referenceID uint64, err error) {
+	if len(b) == 8 {
+		referenceID = binary.BigEndian.Uint64(b)
+	} else if len(b) == 4 {
+		referenceID = uint64(binary.BigEndian.Uint32(b))
+	} else {
+		err = errors.New("bad reference id")
+	}
+	return
+}
+
+func encodeReferenceID(b []byte, referenceID uint64) (n int) {
+	if referenceID > 0xffffffff {
+		binary.BigEndian.PutUint64(b, referenceID)
+		n = 8
+	} else {
+		binary.BigEndian.PutUint32(b, uint32(referenceID))
+		n = 4
+	}
+	return
+}
+
 func (s *Transport) encodeChannel(v reflect.Value) ([]byte, error) {
 	rc := v.Interface().(channel)
 	if rc.stream == nil {
@@ -20,8 +42,7 @@ func (s *Transport) encodeChannel(v reflect.Value) ([]byte, error) {
 	}
 
 	// Get stream identifier?
-	streamID := rc.stream.Identifier()
-	var buf [9]byte
+	buf := make([]byte, 9)
 	if rc.direction == inbound {
 		buf[0] = 0x02 // Reverse direction
 	} else if rc.direction == outbound {
@@ -29,10 +50,7 @@ func (s *Transport) encodeChannel(v reflect.Value) ([]byte, error) {
 	} else {
 		return nil, errors.New("invalid direction")
 	}
-	written := binary.PutUvarint(buf[1:], uint64(streamID))
-	if written > 4 {
-		return nil, errors.New("wrote unexpected stream id size")
-	}
+	written := encodeReferenceID(buf[1:], rc.referenceID)
 	return buf[:(written + 1)], nil
 }
 
@@ -46,18 +64,16 @@ func (s *Transport) decodeChannel(v reflect.Value, b []byte) error {
 	} else {
 		return errors.New("unexpected direction")
 	}
+	referenceID, err := decodeReferenceID(b[1:])
+	if err != nil {
+		return err
+	}
 
-	streamID, readN := binary.Uvarint(b[1:])
-	if readN > 4 {
-		return errors.New("read unexpected stream id size")
+	c := s.getChannel(referenceID)
+	if c == nil {
+		return errors.New("channel does not exist")
 	}
-	stream := s.conn.FindStream(uint32(streamID))
-	if stream == nil {
-		return errors.New("stream does not exist")
-	}
-	rc.session = s
-	rc.stream = stream
-	v.Set(reflect.ValueOf(rc))
+	v.Set(reflect.ValueOf(*c))
 
 	return nil
 }
@@ -84,15 +100,15 @@ func (s *Transport) encodeStream(v reflect.Value) ([]byte, error) {
 		return nil, errors.New("bad type")
 	}
 	var buf [8]byte
-	written := binary.PutUvarint(buf[:], uint64(bs.referenceID))
+	written := encodeReferenceID(buf[:], bs.referenceID)
 
 	return buf[:written], nil
 }
 
 func (s *Transport) decodeStream(v reflect.Value, b []byte) error {
-	referenceID, readN := binary.Uvarint(b)
-	if readN == 0 {
-		return errors.New("bad reference id")
+	referenceID, err := decodeReferenceID(b)
+	if err != nil {
+		return err
 	}
 
 	bs := s.getByteStream(referenceID)
