@@ -310,11 +310,16 @@ func (w *pipeSender) copyValue(v interface{}) (interface{}, error) {
 		return w.copyReceiver(val)
 	case map[string]interface{}:
 		return w.copyChannelMessage(val)
-	case struct{}:
-		return w.copyStructure(v)
-	case *struct{}:
-		return w.copyStructure(v)
+	case map[interface{}]interface{}:
+		return w.copyChannelInterfaceMessage(val)
 	default:
+		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Ptr {
+			if rv.Elem().Kind() == reflect.Struct {
+				return w.copyStructValue(rv.Elem())
+			}
+		} else if rv.Kind() == reflect.Struct {
+			return w.copyStructValue(rv)
+		}
 	}
 	return v, nil
 }
@@ -397,6 +402,22 @@ func (w *pipeSender) copyChannelMessage(m map[string]interface{}) (interface{}, 
 	return mCopy, nil
 }
 
+func (w *pipeSender) copyChannelInterfaceMessage(m map[interface{}]interface{}) (interface{}, error) {
+	mCopy := make(map[string]interface{})
+	for k, v := range m {
+		vCopy, vErr := w.copyValue(v)
+		if vErr != nil {
+			return nil, vErr
+		}
+		keyStr, ok := k.(string)
+		if !ok {
+			return nil, errors.New("invalid non string key")
+		}
+		mCopy[keyStr] = vCopy
+	}
+
+	return mCopy, nil
+}
 func (w *pipeSender) copyStructure(m interface{}) (interface{}, error) {
 	v := reflect.ValueOf(m)
 	if v.Kind() == reflect.Ptr {
@@ -405,6 +426,10 @@ func (w *pipeSender) copyStructure(m interface{}) (interface{}, error) {
 	if v.Kind() != reflect.Struct {
 		return nil, errors.New("invalid non struct type")
 	}
+	return w.copyStructValue(v)
+}
+
+func (w *pipeSender) copyStructValue(v reflect.Value) (interface{}, error) {
 	mCopy := make(map[string]interface{})
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
