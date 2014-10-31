@@ -32,23 +32,37 @@ func (c *channel) copyValue(v interface{}) (interface{}, error) {
 			}
 			return c.copySender(val)
 		}
+	case *channelWrapper:
+		if val.direction == inbound {
+			return c.copyReceiver(val)
+		}
+		return c.copySender(val)
 	case *net.TCPConn:
 		// Do nothing until socket support is added
 	case *net.UDPConn:
 		// Do nothing until socket support is added
 	case io.ReadWriteCloser:
 		return c.copyByteStream(val)
+	case io.ReadCloser:
+		return c.copyByteReadStream(val)
+	case io.WriteCloser:
+		return c.copyByteWriteStream(val)
 	case libchan.Sender:
 		return c.copySender(val)
 	case libchan.Receiver:
 		return c.copyReceiver(val)
 	case map[string]interface{}:
 		return c.copyChannelMessage(val)
-	case struct{}:
-		return c.copyStructure(v)
-	case *struct{}:
-		return c.copyStructure(v)
+	case map[interface{}]interface{}:
+		return c.copyChannelInterfaceMessage(val)
 	default:
+		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Ptr {
+			if rv.Elem().Kind() == reflect.Struct {
+				return c.copyStructValue(rv.Elem())
+			}
+		} else if rv.Kind() == reflect.Struct {
+			return c.copyStructValue(rv)
+		}
 	}
 	return v, nil
 }
@@ -93,6 +107,31 @@ func (c *channel) copyByteStream(stream io.ReadWriteCloser) (io.ReadWriteCloser,
 	return streamCopy, nil
 }
 
+func (c *channel) copyByteReadStream(stream io.ReadCloser) (io.ReadCloser, error) {
+	streamCopy, err := c.session.createByteStream()
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		io.Copy(streamCopy, stream)
+		streamCopy.Close()
+		stream.Close()
+	}()
+	return streamCopy, nil
+}
+
+func (c *channel) copyByteWriteStream(stream io.WriteCloser) (io.WriteCloser, error) {
+	streamCopy, err := c.session.createByteStream()
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		io.Copy(stream, streamCopy)
+		stream.Close()
+	}()
+	return streamCopy, nil
+}
+
 func (c *channel) copyChannelMessage(m map[string]interface{}) (interface{}, error) {
 	mCopy := make(map[string]interface{})
 	for k, v := range m {
@@ -106,6 +145,23 @@ func (c *channel) copyChannelMessage(m map[string]interface{}) (interface{}, err
 	return mCopy, nil
 }
 
+func (c *channel) copyChannelInterfaceMessage(m map[interface{}]interface{}) (interface{}, error) {
+	mCopy := make(map[string]interface{})
+	for k, v := range m {
+		vCopy, vErr := c.copyValue(v)
+		if vErr != nil {
+			return nil, vErr
+		}
+		keyStr, ok := k.(string)
+		if !ok {
+			return nil, errors.New("invalid non string key")
+		}
+		mCopy[keyStr] = vCopy
+	}
+
+	return mCopy, nil
+}
+
 func (c *channel) copyStructure(m interface{}) (interface{}, error) {
 	v := reflect.ValueOf(m)
 	if v.Kind() == reflect.Ptr {
@@ -114,6 +170,10 @@ func (c *channel) copyStructure(m interface{}) (interface{}, error) {
 	if v.Kind() != reflect.Struct {
 		return nil, errors.New("invalid non struct type")
 	}
+	return c.copyStructValue(v)
+}
+
+func (c *channel) copyStructValue(v reflect.Value) (interface{}, error) {
 	mCopy := make(map[string]interface{})
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
