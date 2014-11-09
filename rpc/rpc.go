@@ -12,6 +12,7 @@ import (
 type Cmd struct {
 	Op   string
 	Args []string
+	KV   map[string]interface{}
 	Out  libchan.Sender
 }
 
