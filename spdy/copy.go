@@ -1,6 +1,7 @@
 package spdy
 
 import (
+	"encoding"
 	"errors"
 	"io"
 	"net"
@@ -55,6 +56,13 @@ func (c *channel) copyValue(v interface{}) (interface{}, error) {
 		return c.copyChannelMessage(val)
 	case map[interface{}]interface{}:
 		return c.copyChannelInterfaceMessage(val)
+	case encoding.BinaryMarshaler:
+		p, err := val.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+
+		return c.copyValue(p)
 	default:
 		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Ptr {
 			if rv.Elem().Kind() == reflect.Struct {
@@ -163,10 +171,8 @@ func (c *channel) copyChannelInterfaceMessage(m map[interface{}]interface{}) (in
 }
 
 func (c *channel) copyStructure(m interface{}) (interface{}, error) {
-	v := reflect.ValueOf(m)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
+	v := reflect.Indirect(reflect.ValueOf(m))
+
 	if v.Kind() != reflect.Struct {
 		return nil, errors.New("invalid non struct type")
 	}
@@ -177,6 +183,9 @@ func (c *channel) copyStructValue(v reflect.Value) (interface{}, error) {
 	mCopy := make(map[string]interface{})
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
+		// TODO(stevvooe): Calling Interface without checking if a type can be
+		// interfaced may lead to panics. This value copier may need to be
+		// refactored to handle arbitrary types.
 		vCopy, vErr := c.copyValue(v.Field(i).Interface())
 		if vErr != nil {
 			return nil, vErr

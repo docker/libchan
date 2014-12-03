@@ -1,6 +1,7 @@
 package libchan
 
 import (
+	"encoding"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -312,6 +313,13 @@ func (w *pipeSender) copyValue(v interface{}) (interface{}, error) {
 		return w.copyChannelMessage(val)
 	case map[interface{}]interface{}:
 		return w.copyChannelInterfaceMessage(val)
+	case encoding.BinaryMarshaler:
+		p, err := val.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+
+		return w.copyValue(p)
 	default:
 		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Ptr {
 			if rv.Elem().Kind() == reflect.Struct {
@@ -419,10 +427,8 @@ func (w *pipeSender) copyChannelInterfaceMessage(m map[interface{}]interface{}) 
 	return mCopy, nil
 }
 func (w *pipeSender) copyStructure(m interface{}) (interface{}, error) {
-	v := reflect.ValueOf(m)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
+	v := reflect.Indirect(reflect.ValueOf(m))
+
 	if v.Kind() != reflect.Struct {
 		return nil, errors.New("invalid non struct type")
 	}
