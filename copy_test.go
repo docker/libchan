@@ -4,7 +4,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"reflect"
 	"runtime/pprof"
 	"testing"
 	"time"
@@ -128,36 +127,6 @@ func TestByteStreamProxy(t *testing.T) {
 		}
 	}
 	SpawnProxyTest(t, client, server, 1)
-}
-
-func TestTypeTransmission(t *testing.T) {
-	// TODO(stevvooe): Ensure that libchan transports can all have this same
-	// test run against it.
-
-	// Add problem types to this type definition. For now, we just care about
-	// time.Time.
-	type A struct {
-		T time.Time
-	}
-
-	expected := A{T: time.Now()}
-
-	receiver, sender := Pipe()
-
-	go func() {
-		if err := sender.Send(expected); err != nil {
-			t.Fatalf("unexpected error sending: %v", err)
-		}
-	}()
-
-	var received A
-	if err := receiver.Receive(&received); err != nil {
-		t.Fatalf("unexpected error receiving: %v", err)
-	}
-
-	if !reflect.DeepEqual(received, expected) {
-		t.Fatalf("expected structs to be equal: %#v != %#v", received, expected)
-	}
 }
 
 func SpawnProxyTest(t *testing.T, client SendTestRoutine, server ReceiveTestRoutine, proxyCount int) {
