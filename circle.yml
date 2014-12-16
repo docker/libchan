@@ -1,0 +1,29 @@
+machine:
+  pre:
+    - curl -o go.tar.gz -sL https://golang.org/dl/go1.4.linux-amd64.tar.gz
+    - sudo rm -rf /usr/local/go
+    - sudo tar -C /usr/local -xzf go.tar.gz
+    - sudo chmod a+w /usr/local/go/src/
+
+  hosts:
+    fancy: 127.0.0.1
+
+dependencies:
+  post:
+    - go get github.com/axw/gocov/gocov
+    - go get github.com/mattn/goveralls
+    - go get github.com/golang/lint/golint
+
+test:
+  pre:
+    - go version
+  override:
+    - test -z $(gofmt -s -l . | tee /dev/stderr)
+    - go vet ./...
+    - test -z $(golint ./... | tee /dev/stderr)
+    - go test -race -test.v ./...:
+        timeout: 600
+
+general:
+  branches:
+    ignore:
