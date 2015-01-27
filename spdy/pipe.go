@@ -8,12 +8,12 @@ import (
 
 type pipeSender struct {
 	session *Transport
-	sender  libchan.Sender
+	sender  *channel
 }
 
 type pipeReceiver struct {
 	session  *Transport
-	receiver libchan.Receiver
+	receiver *channel
 }
 
 // Pipe creates a top-level channel pipe using an in memory transport.
@@ -52,7 +52,7 @@ func Pipe() (libchan.Receiver, libchan.Sender, error) {
 		c2.Close()
 		return nil, nil, receiveErr
 	}
-	return &pipeReceiver{s2, receiver}, &pipeSender{s1, sender}, nil
+	return &pipeReceiver{s2, receiver.(*channel)}, &pipeSender{s1, sender.(*channel)}, nil
 }
 
 func (p *pipeSender) Send(message interface{}) error {
@@ -69,4 +69,8 @@ func (p *pipeSender) Close() error {
 
 func (p *pipeReceiver) Receive(message interface{}) error {
 	return p.receiver.Receive(message)
+}
+
+func (p *pipeReceiver) SendTo(dst libchan.Sender) (int, error) {
+	return p.receiver.SendTo(dst)
 }
