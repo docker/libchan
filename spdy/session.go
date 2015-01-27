@@ -250,7 +250,7 @@ func (s *Transport) RegisterListener(listener net.Listener) {
 			conn, err := listener.Accept()
 			if err != nil {
 				// Log
-				continue
+				break
 			}
 			err = s.RegisterConn(conn)
 			if err != nil {

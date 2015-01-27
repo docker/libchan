@@ -174,13 +174,13 @@ func SpawnProxyTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverR
 
 	timeout := time.After(ClientServerTimeout)
 
-	for endClient != nil || endServer != nil {
+	for endClient != nil || endServer != nil || endProxy != nil {
 		select {
 		case <-endProxy:
 			if t.Failed() {
 				t.Fatal("Proxy failed")
 			}
-			endClient = nil
+			endProxy = nil
 		case <-endClient:
 			if t.Failed() {
 				t.Fatal("Client failed")
