@@ -13,6 +13,7 @@ import (
 	"github.com/docker/libchan/spdy"
 )
 
+// RemoteCommand is the received command parameters to execute locally and return
 type RemoteCommand struct {
 	Cmd        string
 	Args       []string
@@ -22,6 +23,7 @@ type RemoteCommand struct {
 	StatusChan libchan.Sender
 }
 
+// CommandResponse is the reponse struct to return to the client
 type CommandResponse struct {
 	Status int
 }
