@@ -24,20 +24,25 @@ type RecvMultiMessage struct {
 }
 
 func TestMultiTcpByteStream(t *testing.T) {
+	listener, listenerErr := net.Listen("tcp", "localhost:0")
+	if listenerErr != nil {
+		t.Fatalf("Error creating byte stream listener: %s", listenerErr)
+	}
+	defer listener.Close()
 	wait := make(chan bool)
 	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
 		<-wait
-		both, connErr := net.Dial("tcp", "localhost:9272")
+		both, connErr := net.Dial("tcp", listener.Addr().String())
 		if connErr != nil {
 			t.Fatalf("Error creating connection: %s", connErr)
 		}
 
-		in, connErr := net.Dial("tcp", "localhost:9272")
+		in, connErr := net.Dial("tcp", listener.Addr().String())
 		if connErr != nil {
 			t.Fatalf("Error creating connection: %s", connErr)
 		}
 
-		out, connErr := net.Dial("tcp", "localhost:9272")
+		out, connErr := net.Dial("tcp", listener.Addr().String())
 		if connErr != nil {
 			t.Fatalf("Error creating connection: %s", connErr)
 		}
@@ -98,10 +103,6 @@ func TestMultiTcpByteStream(t *testing.T) {
 		out.Close()
 	}
 	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
-		listener, listenerErr := net.Listen("tcp", "localhost:9272")
-		if listenerErr != nil {
-			t.Fatalf("Error creating byte stream listener: %s", listenerErr)
-		}
 		s.RegisterListener(listener)
 		close(wait)
 

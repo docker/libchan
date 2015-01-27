@@ -1,7 +1,6 @@
 package spdy
 
 import (
-	"io"
 	"net"
 
 	"github.com/docker/libchan"
@@ -66,10 +65,6 @@ func (p *pipeSender) Close() error {
 		return err
 	}
 	return p.session.Close()
-}
-
-func (p *pipeSender) CreateByteStream() (io.ReadWriteCloser, error) {
-	return p.session.createByteStream()
 }
 
 func (p *pipeReceiver) Receive(message interface{}) error {
