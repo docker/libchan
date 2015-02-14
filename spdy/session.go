@@ -1,6 +1,7 @@
 package spdy
 
 import (
+	"bufio"
 	"errors"
 	"io"
 	"net"
@@ -8,7 +9,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/dmcgowan/go/codec"
+	"github.com/dmcgowan/msgpack"
 	"github.com/docker/libchan"
 	"github.com/docker/spdystream"
 )
@@ -29,8 +30,7 @@ var (
 // Transport is a transport session on top of a network
 // connection using spdy.
 type Transport struct {
-	conn    *spdystream.Connection
-	handler codec.Handle
+	conn *spdystream.Connection
 
 	receiverChan chan *channel
 	channelC     *sync.Cond
@@ -40,10 +40,6 @@ type Transport struct {
 	referenceCounter uint64
 	byteStreamC      *sync.Cond
 	byteStreams      map[uint64]*byteStream
-
-	netConnC *sync.Cond
-	netConns map[byte]map[string]net.Conn
-	networks map[string]byte
 }
 
 type channel struct {
@@ -52,6 +48,11 @@ type channel struct {
 	stream      *spdystream.Stream
 	session     *Transport
 	direction   direction
+	encodeLock  sync.Mutex
+	encoder     *msgpack.Encoder
+	decodeLock  sync.Mutex
+	decoder     *msgpack.Decoder
+	buffer      *bufio.Writer
 }
 
 // NewClientTransport creates a new stream transport from the
@@ -82,9 +83,6 @@ func newSession(conn net.Conn, server bool) (*Transport, error) {
 		referenceCounter: referenceCounter,
 		byteStreamC:      sync.NewCond(new(sync.Mutex)),
 		byteStreams:      make(map[uint64]*byteStream),
-		netConnC:         sync.NewCond(new(sync.Mutex)),
-		netConns:         make(map[byte]map[string]net.Conn),
-		networks:         make(map[string]byte),
 	}
 
 	spdyConn, spdyErr := spdystream.NewConnection(conn, server)
@@ -94,7 +92,6 @@ func newSession(conn net.Conn, server bool) (*Transport, error) {
 	go spdyConn.Serve(session.newStreamHandler)
 
 	session.conn = spdyConn
-	session.handler = session.initializeHandler()
 
 	return session, nil
 }
@@ -134,6 +131,7 @@ func (s *Transport) newStreamHandler(stream *spdystream.Stream) {
 					stream:      stream,
 					session:     s,
 				}
+
 				s.channelC.L.Lock()
 				s.channels[referenceID] = c
 				s.channelC.Broadcast()
@@ -219,56 +217,6 @@ func addrKey(local, remote string) string {
 	copy(b[len(local):], "<>")
 	copy(b[len(local)+2:], remote)
 	return string(b)
-}
-
-// RegisterConn registers a network connection to be used
-// by inbound messages referring to the connection
-// with the registered connection's local and remote address.
-// Note: a connection does not need to be registered before
-// being sent in a message, but does need to be registered
-// to by the receiver of a message. If registration should be
-// automatic, register a listener instead.
-func (s *Transport) RegisterConn(conn net.Conn) error {
-	s.netConnC.L.Lock()
-	defer s.netConnC.L.Unlock()
-	networkType, ok := s.networks[conn.LocalAddr().Network()]
-	if !ok {
-		return errors.New("unknown network")
-	}
-	networks := s.netConns[networkType]
-	networks[addrKey(conn.LocalAddr().String(), conn.RemoteAddr().String())] = conn
-	s.netConnC.Broadcast()
-
-	return nil
-}
-
-// RegisterListener accepts all connections from the listener
-// and immediately registers them.
-func (s *Transport) RegisterListener(listener net.Listener) {
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				// Log
-				break
-			}
-			err = s.RegisterConn(conn)
-			if err != nil {
-				// Log use of unsupported network
-				break
-			}
-		}
-	}()
-}
-
-// Unregister removes the connection from the list of known
-// connections. This should be called when a connection is
-// closed and no longer expected in inbound messages.
-// Failure to unregister connections will increase memory
-// usage since the transport is not notified of closed
-// connections to automatically unregister.
-func (s *Transport) Unregister(net.Conn) {
-
 }
 
 // Close closes the underlying spdy connection
@@ -363,24 +311,20 @@ func (c *channel) Send(message interface{}) error {
 	if c.direction == inbound {
 		return ErrWrongDirection
 	}
-	mCopy, mErr := c.copyMessage(message)
-	if mErr != nil {
-		return mErr
+
+	c.encodeLock.Lock()
+	defer c.encodeLock.Unlock()
+	if c.encoder == nil {
+		c.buffer = bufio.NewWriter(c.stream)
+		c.encoder = msgpack.NewEncoder(c.buffer)
+		c.encoder.AddExtensions(c.initializeExtensions())
 	}
 
-	var buf []byte
-	encoder := codec.NewEncoderBytes(&buf, c.session.handler)
-	encodeErr := encoder.Encode(mCopy)
-	if encodeErr != nil {
-		return encodeErr
+	if err := c.encoder.Encode(message); err != nil {
+		return err
 	}
 
-	// TODO check length of buf
-	_, writeErr := c.stream.Write(buf)
-	if writeErr != nil {
-		return writeErr
-	}
-	return nil
+	return c.buffer.Flush()
 }
 
 // Receive receives a message sent across the channel from
@@ -389,19 +333,41 @@ func (c *channel) Receive(message interface{}) error {
 	if c.direction == outbound {
 		return ErrWrongDirection
 	}
-	buf, readErr := c.stream.ReadData()
-	if readErr != nil {
-		if readErr == io.EOF {
-			c.stream.Close()
+
+	c.decodeLock.Lock()
+	defer c.decodeLock.Unlock()
+	if c.decoder == nil {
+		c.decoder = msgpack.NewDecoder(c.stream)
+		c.decoder.AddExtensions(c.initializeExtensions())
+	}
+
+	decodeErr := c.decoder.Decode(message)
+	if decodeErr == io.EOF {
+		c.stream.Close()
+		c.decoder = nil
+	}
+	return decodeErr
+}
+
+func (c *channel) SendTo(dst libchan.Sender) (int, error) {
+	if c.direction == outbound {
+		return 0, ErrWrongDirection
+	}
+	var n int
+	for {
+		var rm msgpack.RawMessage
+		if err := c.Receive(&rm); err == io.EOF {
+			break
+		} else if err != nil {
+			return n, err
 		}
-		return readErr
+
+		if err := dst.Send(&rm); err != nil {
+			return n, err
+		}
+		n++
 	}
-	decoder := codec.NewDecoderBytes(buf, c.session.handler)
-	decodeErr := decoder.Decode(message)
-	if decodeErr != nil {
-		return decodeErr
-	}
-	return nil
+	return n, nil
 }
 
 // Close closes the underlying stream, causing any subsequent

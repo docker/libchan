@@ -186,11 +186,11 @@ func TestByteStream(t *testing.T) {
 		if m1.Stream == nil {
 			t.Fatalf("Missing byte stream")
 		}
-		bs, bsOk := m1.Stream.(*byteStreamWrapper)
+		bs, bsOk := m1.Stream.(*byteStream)
 		if !bsOk {
 			t.Fatalf("Wrong byte stream type: %T", m1.Stream)
 		}
-		if bs.byteStream.stream == nil {
+		if bs.stream == nil {
 			t.Fatalf("Bytestream missing underlying stream")
 		}
 
