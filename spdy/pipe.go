@@ -1,18 +1,19 @@
 package spdy
 
 import (
+	"io"
 	"net"
 
 	"github.com/docker/libchan"
 )
 
 type pipeSender struct {
-	session *Transport
+	session libchan.Transport
 	sender  *channel
 }
 
 type pipeReceiver struct {
-	session  *Transport
+	session  libchan.Transport
 	receiver *channel
 }
 
@@ -20,26 +21,28 @@ type pipeReceiver struct {
 func Pipe() (libchan.Receiver, libchan.Sender, error) {
 	c1, c2 := net.Pipe()
 
-	s1, err := newSession(c1, false)
+	s1, err := NewSpdyStreamProvider(c1, false)
 	if err != nil {
 		return nil, nil, err
 	}
+	t1 := NewTransport(s1)
 
-	s2, err := newSession(c2, true)
+	s2, err := NewSpdyStreamProvider(c2, true)
 	if err != nil {
 		return nil, nil, err
 	}
+	t2 := NewTransport(s2)
 
 	var receiver libchan.Receiver
 	waitError := make(chan error)
 
 	go func() {
 		var err error
-		receiver, err = s2.WaitReceiveChannel()
+		receiver, err = t2.WaitReceiveChannel()
 		waitError <- err
 	}()
 
-	sender, senderErr := s1.NewSendChannel()
+	sender, senderErr := t1.NewSendChannel()
 	if senderErr != nil {
 		c1.Close()
 		c2.Close()
@@ -52,7 +55,7 @@ func Pipe() (libchan.Receiver, libchan.Sender, error) {
 		c2.Close()
 		return nil, nil, receiveErr
 	}
-	return &pipeReceiver{s2, receiver.(*channel)}, &pipeSender{s1, sender.(*channel)}, nil
+	return &pipeReceiver{t2, receiver.(*channel)}, &pipeSender{t1, sender.(*channel)}, nil
 }
 
 func (p *pipeSender) Send(message interface{}) error {
@@ -64,7 +67,10 @@ func (p *pipeSender) Close() error {
 	if err != nil {
 		return err
 	}
-	return p.session.Close()
+	if closer, ok := p.session.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func (p *pipeReceiver) Receive(message interface{}) error {
