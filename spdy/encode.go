@@ -114,7 +114,7 @@ func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
 			return 0, nil, errors.New("bad type")
 		}
 		if v.session != c.session {
-			streamCopy, err := c.session.createByteStream()
+			streamCopy, err := c.createByteStream()
 			if err != nil {
 				return 0, nil, err
 			}
@@ -133,7 +133,7 @@ func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
 		return 2, b, err
 	case io.Reader:
 		// Either ReadWriteCloser, ReadWriter, or ReadCloser
-		streamCopy, err := c.session.createByteStream()
+		streamCopy, err := c.createByteStream()
 		if err != nil {
 			return 0, nil, err
 		}
@@ -154,7 +154,7 @@ func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
 		b, err := streamCopy.(*byteStream).streamBytes()
 		return 2, b, err
 	case io.Writer:
-		streamCopy, err := c.session.createByteStream()
+		streamCopy, err := c.createByteStream()
 		if err != nil {
 			return 0, nil, err
 		}
@@ -208,13 +208,13 @@ func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
 	return 0, nil, nil
 }
 
-func (s *Transport) decodeStream(v reflect.Value, b []byte) error {
+func (c *channel) decodeStream(v reflect.Value, b []byte) error {
 	referenceID, err := decodeReferenceID(b)
 	if err != nil {
 		return err
 	}
 
-	bs := s.getByteStream(referenceID)
+	bs := c.session.getByteStream(referenceID)
 	if bs != nil {
 		v.Set(reflect.ValueOf(bs))
 	}
@@ -226,6 +226,6 @@ func (c *channel) initializeExtensions() *msgpack.Extensions {
 	exts := msgpack.NewExtensions()
 	exts.SetEncoder(c.encodeExtension)
 	exts.AddDecoder(1, reflect.TypeOf(&channel{}), c.decodeChannel)
-	exts.AddDecoder(2, reflect.TypeOf(&byteStream{}), c.session.decodeStream)
+	exts.AddDecoder(2, reflect.TypeOf(&byteStream{}), c.decodeStream)
 	return exts
 }

@@ -4,14 +4,12 @@ import (
 	"bufio"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"sync"
 
 	"github.com/dmcgowan/msgpack"
 	"github.com/docker/libchan"
-	"github.com/docker/spdystream"
 )
 
 type direction uint8
@@ -30,8 +28,9 @@ var (
 // Transport is a transport session on top of a network
 // connection using spdy.
 type Transport struct {
-	conn *spdystream.Connection
+	provider StreamProvider
 
+	// TODO unify channel and streams maps with libchanStream type
 	receiverChan chan *channel
 	channelC     *sync.Cond
 	channels     map[uint64]*channel
@@ -45,7 +44,7 @@ type Transport struct {
 type channel struct {
 	referenceID uint64
 	parentID    uint64
-	stream      *spdystream.Stream
+	stream      Stream
 	session     *Transport
 	direction   direction
 	encodeLock  sync.Mutex
@@ -55,99 +54,80 @@ type channel struct {
 	buffer      *bufio.Writer
 }
 
-// NewClientTransport creates a new stream transport from the
-// provided network connection. The network connection is
-// expected to already provide a tls session.
-func NewClientTransport(conn net.Conn) (*Transport, error) {
-	return newSession(conn, false)
-}
-
-// NewServerTransport creates a new stream transport from the
-// provided network connection. The network connection is
-// expected to already have completed the tls handshake.
-func NewServerTransport(conn net.Conn) (*Transport, error) {
-	return newSession(conn, true)
-}
-
-func newSession(conn net.Conn, server bool) (*Transport, error) {
-	var referenceCounter uint64
-	if server {
-		referenceCounter = 2
-	} else {
-		referenceCounter = 1
-	}
+// NewTransport returns an object implementing the
+// libchan Transport interface using a stream provider.
+func NewTransport(provider StreamProvider) libchan.Transport {
 	session := &Transport{
+		provider:         provider,
 		receiverChan:     make(chan *channel),
 		channelC:         sync.NewCond(new(sync.Mutex)),
 		channels:         make(map[uint64]*channel),
-		referenceCounter: referenceCounter,
+		referenceCounter: 1,
 		byteStreamC:      sync.NewCond(new(sync.Mutex)),
 		byteStreams:      make(map[uint64]*byteStream),
 	}
 
-	spdyConn, spdyErr := spdystream.NewConnection(conn, server)
-	if spdyErr != nil {
-		return nil, spdyErr
-	}
-	go spdyConn.Serve(session.newStreamHandler)
+	go session.handleStreams()
 
-	session.conn = spdyConn
-
-	return session, nil
+	return session
 }
 
-func (s *Transport) newStreamHandler(stream *spdystream.Stream) {
-	referenceIDString := stream.Headers().Get("libchan-ref")
-	parentIDString := stream.Headers().Get("libchan-parent-ref")
-
-	returnHeaders := http.Header{}
-	finish := false
-	referenceID, parseErr := strconv.ParseUint(referenceIDString, 10, 64)
-	if parseErr != nil {
-		returnHeaders.Set("status", "400")
-		finish = true
-	} else {
-		if parentIDString == "" {
-			byteStream := &byteStream{
-				referenceID: referenceID,
-				stream:      stream,
-				session:     s,
+func (s *Transport) handleStreams() {
+	listener := s.provider.Listen()
+	for {
+		stream, err := listener.Accept()
+		if err != nil {
+			if err != io.EOF {
+				// TODO: stream handle error
 			}
-			s.byteStreamC.L.Lock()
-			s.byteStreams[referenceID] = byteStream
-			s.byteStreamC.Broadcast()
-			s.byteStreamC.L.Unlock()
+			break
+		}
+		headers := stream.Headers()
+		referenceIDString := headers.Get("libchan-ref")
+		parentIDString := headers.Get("libchan-parent-ref")
 
-			returnHeaders.Set("status", "200")
+		referenceID, parseErr := strconv.ParseUint(referenceIDString, 10, 64)
+		if parseErr != nil {
+			// TODO: bad stream error
+			stream.Reset()
 		} else {
-			parentID, parseErr := strconv.ParseUint(parentIDString, 10, 64)
-			if parseErr != nil {
-				returnHeaders.Set("status", "400")
-				finish = true
-			} else {
-				c := &channel{
+			if parentIDString == "" {
+				byteStream := &byteStream{
 					referenceID: referenceID,
-					parentID:    parentID,
 					stream:      stream,
 					session:     s,
 				}
+				s.byteStreamC.L.Lock()
+				s.byteStreams[referenceID] = byteStream
+				s.byteStreamC.Broadcast()
+				s.byteStreamC.L.Unlock()
+			} else {
+				parentID, parseErr := strconv.ParseUint(parentIDString, 10, 64)
+				if parseErr != nil {
+					// TODO: bad stream error
+					stream.Reset()
+				} else {
+					c := &channel{
+						referenceID: referenceID,
+						parentID:    parentID,
+						stream:      stream,
+						session:     s,
+					}
 
-				s.channelC.L.Lock()
-				s.channels[referenceID] = c
-				s.channelC.Broadcast()
-				s.channelC.L.Unlock()
+					s.channelC.L.Lock()
+					s.channels[referenceID] = c
+					s.channelC.Broadcast()
+					s.channelC.L.Unlock()
 
-				if parentID == 0 {
-					c.direction = inbound
-					s.receiverChan <- c
+					if parentID == 0 {
+						c.direction = inbound
+						s.receiverChan <- c
+					}
+
 				}
-
-				returnHeaders.Set("status", "200")
 			}
 		}
 	}
-
-	stream.SendReply(returnHeaders, finish)
 }
 
 func (s *Transport) getByteStream(referenceID uint64) *byteStream {
@@ -172,10 +152,12 @@ func (s *Transport) getChannel(referenceID uint64) *channel {
 	return c
 }
 
-func (s *Transport) dial(referenceID uint64) (*byteStream, error) {
+func (s *Transport) dial(referenceID, parentID uint64) (*byteStream, error) {
 	headers := http.Header{}
 	headers.Set("libchan-ref", strconv.FormatUint(referenceID, 10))
-	stream, streamErr := s.conn.CreateStream(headers, nil, false)
+	// TODO: Add this to implement protocol
+	//headers.Set("libchan-parent-ref", strconv.FormatUint(parentID, 10))
+	stream, streamErr := s.provider.NewStream(headers)
 	if streamErr != nil {
 		return nil, streamErr
 	}
@@ -195,18 +177,18 @@ func (s *Transport) nextReferenceID() uint64 {
 	return referenceID
 }
 
-func (s *Transport) createByteStream() (io.ReadWriteCloser, error) {
-	referenceID := s.nextReferenceID()
+func (c *channel) createByteStream() (io.ReadWriteCloser, error) {
+	referenceID := c.session.nextReferenceID()
 
-	byteStream, bsErr := s.dial(referenceID)
+	byteStream, bsErr := c.session.dial(referenceID, c.referenceID)
 	if bsErr != nil {
 		return nil, bsErr
 	}
 	byteStream.referenceID = referenceID
 
-	s.byteStreamC.L.Lock()
-	s.byteStreams[referenceID] = byteStream
-	s.byteStreamC.L.Unlock()
+	c.session.byteStreamC.L.Lock()
+	c.session.byteStreams[referenceID] = byteStream
+	c.session.byteStreamC.L.Unlock()
 
 	return byteStream, nil
 }
@@ -219,9 +201,9 @@ func addrKey(local, remote string) string {
 	return string(b)
 }
 
-// Close closes the underlying spdy connection
+// Close closes the underlying stream provider
 func (s *Transport) Close() error {
-	return s.conn.Close()
+	return s.provider.Close()
 }
 
 // NewSendChannel creates and returns a new send channel.  The receive
@@ -233,7 +215,7 @@ func (s *Transport) NewSendChannel() (libchan.Sender, error) {
 	headers.Set("libchan-ref", strconv.FormatUint(referenceID, 10))
 	headers.Set("libchan-parent-ref", "0")
 
-	stream, streamErr := s.conn.CreateStream(headers, nil, false)
+	stream, streamErr := s.provider.NewStream(headers)
 	if streamErr != nil {
 		return nil, streamErr
 	}
@@ -271,7 +253,7 @@ func (c *channel) createSubChannel(direction direction) (libchan.Sender, libchan
 	headers.Set("libchan-ref", strconv.FormatUint(referenceID, 10))
 	headers.Set("libchan-parent-ref", strconv.FormatUint(c.referenceID, 10))
 
-	stream, streamErr := c.stream.CreateSubStream(headers, false)
+	stream, streamErr := c.session.provider.NewStream(headers)
 	if streamErr != nil {
 		return nil, nil, streamErr
 	}
