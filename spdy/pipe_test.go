@@ -107,7 +107,7 @@ func SpawnPipeTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverRo
 	endClient := make(chan bool)
 	endServer := make(chan bool)
 
-	sender, receiver, err := Pipe()
+	receiver, sender, err := Pipe()
 	if err != nil {
 		t.Fatalf("Error creating pipe: %s", err)
 	}
