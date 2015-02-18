@@ -17,7 +17,7 @@ type pipeReceiver struct {
 }
 
 // Pipe creates a top-level channel pipe using an in memory transport.
-func Pipe() (libchan.Sender, libchan.Receiver, error) {
+func Pipe() (libchan.Receiver, libchan.Sender, error) {
 	c1, c2 := net.Pipe()
 
 	s1, err := newSession(c1, false)
@@ -52,7 +52,7 @@ func Pipe() (libchan.Sender, libchan.Receiver, error) {
 		c2.Close()
 		return nil, nil, receiveErr
 	}
-	return &pipeSender{s1, sender}, &pipeReceiver{s2, receiver}, nil
+	return &pipeReceiver{s2, receiver}, &pipeSender{s1, sender}, nil
 }
 
 func (p *pipeSender) Send(message interface{}) error {
