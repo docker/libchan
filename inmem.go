@@ -281,7 +281,7 @@ func (w *pipeSender) copyMessage(message interface{}) (interface{}, error) {
 	if mapOk {
 		return w.copyChannelMessage(mapCopy)
 	}
-	return w.copyStructure(message)
+	return w.copyValue(message)
 }
 
 func (w *pipeSender) copyValue(v interface{}) (interface{}, error) {
@@ -418,6 +418,7 @@ func (w *pipeSender) copyChannelInterfaceMessage(m map[interface{}]interface{}) 
 
 	return mCopy, nil
 }
+
 func (w *pipeSender) copyStructure(m interface{}) (interface{}, error) {
 	v := reflect.ValueOf(m)
 	if v.Kind() == reflect.Ptr {

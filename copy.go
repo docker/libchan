@@ -10,7 +10,7 @@ import (
 func Copy(w Sender, r Receiver) (int, error) {
 	var n int
 	for {
-		m := make(map[string]interface{})
+		var m interface{}
 		err := r.Receive(&m)
 		if err != nil {
 			if err == io.EOF {
