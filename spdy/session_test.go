@@ -549,3 +549,159 @@ func SpawnClientServerTest(t *testing.T, host string, client ClientRoutine, serv
 	}
 
 }
+
+// Test that server detects client session is dead while waiting for receive channel
+func TestHeartbeatWaitReceiveChannel(t *testing.T) {
+	testChan := make(chan struct {bool; string})
+
+	// Open connection and channel then close connection without closing transport
+	client := func() {
+		sleepChan := make(chan struct {})
+		conn, _ := net.Dial("tcp", "localhost:12943")
+		NewClientTransport(conn)
+		go func() {
+			time.Sleep(time.Millisecond * 200)
+			close(sleepChan)
+		}()
+		<-sleepChan
+		conn.Close()
+	}
+
+	// Check that dead session is detected from WaitReceiveChannel()
+	server := func() {
+		listener, _ := net.Listen("tcp", "localhost:12943")
+		transportListener, _ := NewTransportListener(listener, NoAuthenticator)
+		transport, err1 := transportListener.AcceptTransport()
+		if err1 != nil {
+			t.Fatal(err1)
+		}
+		// Shorten heartbeat for test speed reasons
+		transport.HeartbeatInterval = time.Millisecond*100
+		transport.HeartbeatLimit = 3
+		_, err2 := transport.WaitReceiveChannel()
+		if err2 != nil {
+			if err2.Error() == "session appears dead no response after 300ms" {
+				testChan<-struct{bool; string}{true, err2.Error()}
+			} else {
+				testChan<-struct{bool; string}{false, err2.Error()}
+			}
+		} else {
+			testChan<-struct{bool; string}{false, "No error thrown as expected"}
+		}
+	}
+
+	go server()
+	time.Sleep(time.Millisecond * 100)
+	go client()
+
+	x := <-testChan
+	if !x.bool {
+		t.Fatal(x.string)
+	}
+}
+
+// Test that the dead session flag errors out
+func TestDeadSessionFlagWaitReceiveChannel(t *testing.T) {
+	testChan := make(chan struct {bool; string})
+
+	// Open connection and channel then close connection without closing transport
+	client := func() {
+		sleepChan := make(chan struct {})
+		conn, _ := net.Dial("tcp", "localhost:12950")
+		NewClientTransport(conn)
+		go func() {
+			time.Sleep(time.Millisecond * 200)
+			close(sleepChan)
+		}()
+		<-sleepChan
+		conn.Close()
+	}
+
+	// Check that dead session is detected from WaitReceiveChannel()
+	server := func() {
+		listener, _ := net.Listen("tcp", "localhost:12950")
+		transportListener, _ := NewTransportListener(listener, NoAuthenticator)
+		transport, err1 := transportListener.AcceptTransport()
+		if err1 != nil {
+			t.Fatal(err1)
+		}
+		// Shorten heartbeat for test speed reasons
+		transport.HeartbeatInterval = time.Millisecond*100
+		transport.HeartbeatLimit = 3
+		// Need to use a goroutine to not block the transport
+		go func() {
+			time.Sleep(time.Millisecond * 500)
+			_, err2 := transport.WaitReceiveChannel()
+			if err2 != nil {
+				if err2.Error() == "session appears dead no response after 300ms" {
+					testChan<-struct{bool; string}{true, err2.Error()}
+				} else {
+					testChan<-struct{bool; string}{false, err2.Error()}
+				}
+			} else {
+				testChan<-struct{bool; string}{false, "No error thrown as expected"}
+			}
+		}()
+	}
+
+	go server()
+	time.Sleep(time.Millisecond * 100)
+	go client()
+
+	x := <-testChan
+	if !x.bool {
+		t.Fatal(x.string)
+	}
+}
+
+// Test that server detects client session is dead while waiting for receiving data
+func TestHeartbeatReceive(t *testing.T) {
+	testChan := make(chan struct {bool; string})
+
+	// Open connection and channel then close connection without closing transport
+	client := func() {
+		sleepChan := make(chan struct {})
+		conn, _ := net.Dial("tcp", "localhost:12452")
+		transport, _ := NewClientTransport(conn)
+		//		sender, _ :=
+		transport.NewSendChannel()
+		go func() {
+			time.Sleep(time.Millisecond * 300)
+			close(sleepChan)
+		}()
+		<-sleepChan
+		conn.Close()
+	}
+
+	// Check that dead session is detected from WaitReceiveChannel()
+	server := func() {
+		listener, _ := net.Listen("tcp", "localhost:12452")
+		transportListener, _ := NewTransportListener(listener, NoAuthenticator)
+		transport, err1 := transportListener.AcceptTransport()
+		if err1 != nil {
+			t.Fatal(err1)
+		}
+		// Shorten heartbeat for test speed reasons
+		transport.HeartbeatInterval = time.Millisecond*100
+		transport.HeartbeatLimit = 3
+		receiver, _ := transport.WaitReceiveChannel()
+		foo := &SimpleMessage{}
+		rerr := receiver.Receive(foo)
+		if rerr.Error() == "session appears dead no response after 300ms" {
+			testChan<-struct{bool; string}{true, rerr.Error()}
+		} else {
+			testChan<-struct{bool; string}{false, "No error thrown as expected"}
+		}
+	}
+
+	go server()
+	time.Sleep(time.Millisecond * 100)
+	go client()
+
+	x := <-testChan
+	if !x.bool {
+		t.Fatal(x.string)
+	}
+}
+
+
