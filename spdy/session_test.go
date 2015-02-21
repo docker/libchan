@@ -1,6 +1,7 @@
 package spdy
 
 import (
+	"bufio"
 	"io"
 	"net"
 	"os"
@@ -143,17 +144,15 @@ type MessageWithByteStream struct {
 
 func TestByteStream(t *testing.T) {
 	client := func(t *testing.T, sndr libchan.Sender, s libchan.Transport) {
-		bs, bsErr := sndr.(*sender).stream.createByteStream()
-		if bsErr != nil {
-			t.Fatalf("Error creating byte stream: %s", bsErr)
-		}
+		bs, remote := net.Pipe()
+		w := bufio.NewWriter(bs)
 
 		m1 := &MessageWithByteStream{
 			Message: "with a byte stream",
-			Stream:  bs,
+			Stream:  remote,
 		}
 
-		_, writeErr := bs.Write([]byte("Hello there server!"))
+		_, writeErr := w.Write([]byte("Hello there server!"))
 		if writeErr != nil {
 			t.Fatalf("Error writing to byte stream: %s", writeErr)
 		}
@@ -161,6 +160,9 @@ func TestByteStream(t *testing.T) {
 		sendErr := sndr.Send(m1)
 		if sendErr != nil {
 			t.Fatalf("Error sending channel: %s", sendErr)
+		}
+		if flushErr := w.Flush(); flushErr != nil {
+			t.Fatalf("Error flushing: %s", flushErr)
 		}
 
 		readBytes := make([]byte, 30)
@@ -203,7 +205,7 @@ func TestByteStream(t *testing.T) {
 			t.Fatalf("Unexpected read value:\n\tExpected: %q\n\tActual: %q", expected, string(readBytes[:n]))
 		}
 
-		_, writeErr := bs.Write([]byte("G'day client ☺"))
+		_, writeErr := m1.Stream.Write([]byte("G'day client ☺"))
 		if writeErr != nil {
 			t.Fatalf("Error writing to byte stream: %s", writeErr)
 		}
@@ -446,7 +448,7 @@ func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s libchan.Transpor
 		if sessionErr != nil {
 			t.Fatalf("Error creating session: %s", sessionErr)
 		}
-		session := NewTransport(provider)
+		session := NewTransport(provider, &MsgpackCodec{})
 
 		sender, senderErr := session.NewSendChannel()
 		if senderErr != nil {
@@ -478,7 +480,7 @@ func ServerReceiveWrapper(f func(t *testing.T, c libchan.Receiver, s libchan.Tra
 		if sessionErr != nil {
 			t.Fatalf("Error creating session: %s", sessionErr)
 		}
-		session := NewTransport(provider)
+		session := NewTransport(provider, &MsgpackCodec{})
 
 		receiver, receiverErr := session.WaitReceiveChannel()
 		if receiverErr != nil {

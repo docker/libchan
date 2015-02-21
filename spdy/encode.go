@@ -9,6 +9,7 @@ import (
 
 	"github.com/dmcgowan/msgpack"
 	"github.com/docker/libchan"
+	"github.com/docker/libchan/encoding"
 )
 
 const (
@@ -19,6 +20,14 @@ const (
 	outboundChannelCode = 5
 	timeCode            = 6
 )
+
+type cproducer struct {
+	encoding.ChanProducer
+}
+
+type creceiver struct {
+	encoding.ChanReceiver
+}
 
 func decodeReferenceID(b []byte) (referenceID uint64, err error) {
 	if len(b) == 8 {
@@ -31,105 +40,86 @@ func decodeReferenceID(b []byte) (referenceID uint64, err error) {
 	return
 }
 
-func encodeReferenceID(b []byte, referenceID uint64) (n int) {
+func encodeReferenceID(referenceID uint64) []byte {
 	if referenceID > 0xffffffff {
-		binary.BigEndian.PutUint64(b, referenceID)
-		n = 8
-	} else {
-		binary.BigEndian.PutUint32(b, uint32(referenceID))
-		n = 4
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, referenceID)
+		return buf
 	}
-	return
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, uint32(referenceID))
+	return buf
 }
 
-func (s *stream) channelBytes() ([]byte, error) {
-	buf := make([]byte, 8)
-	written := encodeReferenceID(buf, s.referenceID)
-	return buf[:written], nil
-}
-
-func (s *stream) copySendChannel(send libchan.Sender) (*nopSender, error) {
-	recv, sendCopy, err := s.CreateNestedReceiver()
+func (p *cproducer) copySendChannel(send libchan.Sender) (uint64, error) {
+	recv, copyID, err := p.CreateReceiver()
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	// Start copying into sender
 	go func() {
 		libchan.Copy(send, recv)
 		send.Close()
 	}()
-	return sendCopy.(*nopSender), nil
+	return copyID, nil
 }
 
-func (s *stream) copyReceiveChannel(recv libchan.Receiver) (*nopReceiver, error) {
-	send, recvCopy, err := s.CreateNestedSender()
+func (p *cproducer) copyReceiveChannel(recv libchan.Receiver) (uint64, error) {
+	send, copyID, err := p.CreateSender()
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	// Start copying from receiver
 	go func() {
 		libchan.Copy(send, recv)
 		send.Close()
 	}()
-	return recvCopy.(*nopReceiver), nil
+	return copyID, nil
 }
 
-func (s *stream) decodeStream(b []byte) (*stream, error) {
+func (r *creceiver) decodeStream(b []byte) (io.ReadWriteCloser, error) {
 	referenceID, err := decodeReferenceID(b)
 	if err != nil {
 		return nil, err
 	}
 
-	gs := s.session.getStream(referenceID)
-	if gs == nil {
-		return nil, errors.New("stream does not exist")
-	}
-
-	return gs, nil
+	return r.GetStream(referenceID)
 }
 
-func (s *stream) decodeReceiver(v reflect.Value, b []byte) error {
-	bs, err := s.decodeStream(b)
+func (r *creceiver) decodeReceiver(v reflect.Value, b []byte) error {
+	referenceID, err := decodeReferenceID(b)
 	if err != nil {
 		return err
 	}
 
-	v.Set(reflect.ValueOf(&receiver{stream: bs}))
-
-	return nil
-}
-
-func (s *stream) decodeSender(v reflect.Value, b []byte) error {
-	bs, err := s.decodeStream(b)
+	recv, err := r.GetReceiver(referenceID)
 	if err != nil {
 		return err
 	}
 
-	v.Set(reflect.ValueOf(&sender{stream: bs}))
+	v.Set(reflect.ValueOf(recv))
 
 	return nil
 }
 
-func (s *stream) streamBytes() ([]byte, error) {
-	var buf [8]byte
-	written := encodeReferenceID(buf[:], s.referenceID)
-
-	return buf[:written], nil
-}
-
-func (s *stream) decodeWStream(v reflect.Value, b []byte) error {
-	bs, err := s.decodeStream(b)
+func (r *creceiver) decodeSender(v reflect.Value, b []byte) error {
+	referenceID, err := decodeReferenceID(b)
 	if err != nil {
 		return err
 	}
 
-	v.Set(reflect.ValueOf(bs))
+	send, err := r.GetSender(referenceID)
+	if err != nil {
+		return err
+	}
+
+	v.Set(reflect.ValueOf(send))
 
 	return nil
 }
 
-func (s *stream) decodeRStream(v reflect.Value, b []byte) error {
-	bs, err := s.decodeStream(b)
+func (r *creceiver) decodeWStream(v reflect.Value, b []byte) error {
+	bs, err := r.decodeStream(b)
 	if err != nil {
 		return err
 	}
@@ -139,14 +129,25 @@ func (s *stream) decodeRStream(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func encodeTime(t *time.Time) ([]byte, error) {
+func (r *creceiver) decodeRStream(v reflect.Value, b []byte) error {
+	bs, err := r.decodeStream(b)
+	if err != nil {
+		return err
+	}
+
+	v.Set(reflect.ValueOf(bs))
+
+	return bs.Close()
+}
+
+func entimeCode(t *time.Time) ([]byte, error) {
 	var b [12]byte
 	binary.BigEndian.PutUint64(b[0:8], uint64(t.Unix()))
 	binary.BigEndian.PutUint32(b[8:12], uint32(t.Nanosecond()))
 	return b[:], nil
 }
 
-func decodeTime(v reflect.Value, b []byte) error {
+func detimeCode(v reflect.Value, b []byte) error {
 	if len(b) != 12 {
 		return errors.New("Invalid length")
 	}
@@ -161,78 +162,24 @@ func decodeTime(v reflect.Value, b []byte) error {
 	return nil
 }
 
-func (s *stream) encodeExtended(iv reflect.Value) (i int, b []byte, e error) {
+func (p *cproducer) encodeExtended(iv reflect.Value) (i int, b []byte, e error) {
 	switch v := iv.Interface().(type) {
-	case *nopSender:
-		if v.stream == nil {
-			return 0, nil, errors.New("bad type")
-		}
-		if v.stream.session != s.session {
-			rc, err := s.copySendChannel(v)
-			if err != nil {
-				return 0, nil, err
-			}
-			b, err := rc.stream.channelBytes()
-			return inboundChannelCode, b, err
-		}
-
-		b, err := v.stream.channelBytes()
-		return inboundChannelCode, b, err
-	case *nopReceiver:
-		if v.stream == nil {
-			return 0, nil, errors.New("bad type")
-		}
-		if v.stream.session != s.session {
-			rc, err := s.copyReceiveChannel(v)
-			if err != nil {
-				return 0, nil, err
-			}
-			b, err := rc.stream.channelBytes()
-			return outboundChannelCode, b, err
-		}
-
-		b, err := v.stream.channelBytes()
-		return outboundChannelCode, b, err
-	case *stream:
-		if v.referenceID == 0 {
-			return 0, nil, errors.New("bad type")
-		}
-		if v.session != s.session {
-			streamCopy, err := s.createByteStream()
-			if err != nil {
-				return 0, nil, err
-			}
-			go func(r io.Reader) {
-				io.Copy(streamCopy, r)
-				streamCopy.Close()
-			}(v)
-			go func(w io.WriteCloser) {
-				io.Copy(w, streamCopy)
-				w.Close()
-			}(v)
-			v = streamCopy
-
-		}
-		b, err := v.channelBytes()
-		return duplexStreamCode, b, err
 	case libchan.Sender:
-		copyCh, err := s.copySendChannel(v)
+		copyCh, err := p.copySendChannel(v)
 		if err != nil {
 			return 0, nil, err
 		}
-		b, err := copyCh.stream.channelBytes()
-		return inboundChannelCode, b, err
+		return inboundChannelCode, encodeReferenceID(copyCh), nil
 	case libchan.Receiver:
-		copyCh, err := s.copyReceiveChannel(v)
+		copyCh, err := p.copyReceiveChannel(v)
 		if err != nil {
 			return 0, nil, err
 		}
-		b, err := copyCh.stream.channelBytes()
-		return outboundChannelCode, b, err
+		return outboundChannelCode, encodeReferenceID(copyCh), nil
 
 	case io.Reader:
 		// Either ReadWriteCloser, ReadWriter, or ReadCloser
-		streamCopy, err := s.createByteStream()
+		streamCopy, copyID, err := p.CreateStream()
 		if err != nil {
 			return 0, nil, err
 		}
@@ -253,10 +200,9 @@ func (s *stream) encodeExtended(iv reflect.Value) (i int, b []byte, e error) {
 			}()
 			code = duplexStreamCode
 		}
-		b, err := streamCopy.streamBytes()
-		return code, b, err
+		return code, encodeReferenceID(copyID), nil
 	case io.Writer:
-		streamCopy, err := s.createByteStream()
+		streamCopy, copyID, err := p.CreateStream()
 		if err != nil {
 			return 0, nil, err
 		}
@@ -270,24 +216,49 @@ func (s *stream) encodeExtended(iv reflect.Value) (i int, b []byte, e error) {
 				io.Copy(v, streamCopy)
 			}()
 		}
-
-		b, err := streamCopy.streamBytes()
-		return inboundStreamCode, b, err
+		return inboundStreamCode, encodeReferenceID(copyID), nil
 	case *time.Time:
-		b, err := encodeTime(v)
+		b, err := entimeCode(v)
 		return timeCode, b, err
 	}
 	return 0, nil, nil
 }
 
-func (s *stream) initializeExtensions() *msgpack.Extensions {
+// MsgpackCodec implements the libchan encoding using msgpack5.
+type MsgpackCodec struct{}
+
+// NewEncoder returns a libchan encoder which encodes given objects
+// to msgpack5 on the given datastream using the given encoding
+// channel producer.
+func (codec *MsgpackCodec) NewEncoder(w io.Writer, p encoding.ChanProducer) encoding.Encoder {
+	prd := &cproducer{p}
+	encoder := msgpack.NewEncoder(w)
 	exts := msgpack.NewExtensions()
-	exts.SetEncoder(s.encodeExtended)
-	exts.AddDecoder(duplexStreamCode, reflect.TypeOf(&stream{}), s.decodeWStream)
-	exts.AddDecoder(inboundStreamCode, reflect.TypeOf(&stream{}), s.decodeWStream)
-	exts.AddDecoder(outboundStreamCode, reflect.TypeOf(&stream{}), s.decodeRStream)
-	exts.AddDecoder(inboundChannelCode, reflect.TypeOf(&sender{}), s.decodeSender)
-	exts.AddDecoder(outboundChannelCode, reflect.TypeOf(&receiver{}), s.decodeReceiver)
-	exts.AddDecoder(timeCode, reflect.TypeOf(&time.Time{}), decodeTime)
-	return exts
+	exts.SetEncoder(prd.encodeExtended)
+	encoder.AddExtensions(exts)
+	return encoder
+}
+
+// NewDecoder returns a libchan decoder which decodes objects from
+// the given data stream from msgpack5 into provided object using
+// the provided types for libchan interfaces.
+func (codec *MsgpackCodec) NewDecoder(r io.Reader, recv encoding.ChanReceiver, streamT, recvT, sendT reflect.Type) encoding.Decoder {
+	rec := &creceiver{recv}
+	decoder := msgpack.NewDecoder(r)
+	exts := msgpack.NewExtensions()
+	exts.AddDecoder(duplexStreamCode, streamT, rec.decodeWStream)
+	exts.AddDecoder(inboundStreamCode, streamT, rec.decodeWStream)
+	exts.AddDecoder(outboundStreamCode, streamT, rec.decodeRStream)
+	exts.AddDecoder(inboundChannelCode, sendT, rec.decodeSender)
+	exts.AddDecoder(outboundChannelCode, recvT, rec.decodeReceiver)
+	exts.AddDecoder(timeCode, reflect.TypeOf(&time.Time{}), detimeCode)
+	decoder.AddExtensions(exts)
+	return decoder
+}
+
+// NewRawMessage returns a transit object which will copy a
+// msgpack5 datastream and allow decoding that object
+// using a Decoder from the codec object.
+func (codec *MsgpackCodec) NewRawMessage() encoding.Decoder {
+	return new(msgpack.RawMessage)
 }

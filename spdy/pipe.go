@@ -25,13 +25,13 @@ func Pipe() (libchan.Receiver, libchan.Sender, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	t1 := NewTransport(s1)
+	t1 := NewTransport(s1, &MsgpackCodec{})
 
 	s2, err := NewSpdyStreamProvider(c2, true)
 	if err != nil {
 		return nil, nil, err
 	}
-	t2 := NewTransport(s2)
+	t2 := NewTransport(s2, &MsgpackCodec{})
 
 	var recv libchan.Receiver
 	waitError := make(chan error)

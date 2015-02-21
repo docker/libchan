@@ -5,12 +5,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
-	"github.com/dmcgowan/msgpack"
 	"github.com/docker/libchan"
+	"github.com/docker/libchan/encoding"
 )
 
 var (
@@ -27,6 +28,7 @@ type Transport struct {
 	receiverChan     chan *receiver
 	streamC          *sync.Cond
 	streams          map[uint64]*stream
+	codec            encoding.ChannelCodec
 }
 
 type stream struct {
@@ -39,33 +41,26 @@ type stream struct {
 type sender struct {
 	stream     *stream
 	encodeLock sync.Mutex
-	encoder    *msgpack.Encoder
+	encoder    encoding.Encoder
 	buffer     *bufio.Writer
 }
 
 type receiver struct {
 	stream     *stream
 	decodeLock sync.Mutex
-	decoder    *msgpack.Decoder
-}
-
-type nopReceiver struct {
-	stream *stream
-}
-
-type nopSender struct {
-	stream *stream
+	decoder    encoding.Decoder
 }
 
 // NewTransport returns an object implementing the
 // libchan Transport interface using a stream provider.
-func NewTransport(provider StreamProvider) libchan.Transport {
+func NewTransport(provider StreamProvider, codec encoding.ChannelCodec) libchan.Transport {
 	session := &Transport{
 		provider:         provider,
 		referenceCounter: 1,
 		receiverChan:     make(chan *receiver),
 		streamC:          sync.NewCond(new(sync.Mutex)),
 		streams:          make(map[uint64]*stream),
+		codec:            codec,
 	}
 
 	go session.handleStreams()
@@ -167,8 +162,12 @@ func (s *Transport) createSubStream(parentID uint64) (*stream, error) {
 	return newStream, nil
 
 }
-func (s *stream) createByteStream() (*stream, error) {
-	return s.session.createSubStream(s.referenceID)
+func (s *stream) CreateStream() (io.ReadWriteCloser, uint64, error) {
+	strm, err := s.session.createSubStream(s.referenceID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return strm, strm.referenceID, nil
 }
 
 // NewSendChannel creates and returns a new send channel.  The receive
@@ -195,28 +194,50 @@ func (s *Transport) WaitReceiveChannel() (libchan.Receiver, error) {
 	return r, nil
 }
 
-// CreateNestedReceiver creates a new channel returning the local
-// receiver and the remote sender.  The remote sender needs to be
-// sent across the channel before being utilized.
-func (s *stream) CreateNestedReceiver() (libchan.Receiver, libchan.Sender, error) {
+// CreateReceiver creates a new channel returning the local
+// receiver and the remote sender identifier.
+func (s *stream) CreateReceiver() (libchan.Receiver, uint64, error) {
 	stream, err := s.session.createSubStream(s.referenceID)
 	if err != nil {
-		return nil, nil, err
+		return nil, 0, err
 	}
 
-	return &receiver{stream: stream}, &nopSender{stream: stream}, err
+	return &receiver{stream: stream}, uint64(stream.referenceID), err
 }
 
-// CreateNestedReceiver creates a new channel returning the local
-// sender and the remote receiver.  The remote receiver needs to be
-// sent across the channel before being utilized.
-func (s *stream) CreateNestedSender() (libchan.Sender, libchan.Receiver, error) {
+// CreateSender creates a new channel returning the local
+// sender and the remote receiver identifier.
+func (s *stream) CreateSender() (libchan.Sender, uint64, error) {
 	stream, err := s.session.createSubStream(s.referenceID)
 	if err != nil {
-		return nil, nil, err
+		return nil, 0, err
 	}
 
-	return &sender{stream: stream}, &nopReceiver{stream: stream}, err
+	return &sender{stream: stream}, uint64(stream.referenceID), err
+}
+
+func (s *stream) GetSender(sid uint64) (libchan.Sender, error) {
+	strm := s.session.getStream(sid)
+	if strm == nil {
+		return nil, errors.New("sender does not exist")
+	}
+	return &sender{stream: strm}, nil
+}
+
+func (s *stream) GetReceiver(sid uint64) (libchan.Receiver, error) {
+	strm := s.session.getStream(sid)
+	if strm == nil {
+		return nil, errors.New("sender does not exist")
+	}
+	return &receiver{stream: strm}, nil
+}
+
+func (s *stream) GetStream(sid uint64) (io.ReadWriteCloser, error) {
+	strm := s.session.getStream(sid)
+	if strm == nil {
+		return nil, errors.New("sender does not exist")
+	}
+	return strm, nil
 }
 
 // Send sends a message across the channel to a receiver on the
@@ -226,8 +247,7 @@ func (s *sender) Send(message interface{}) error {
 	defer s.encodeLock.Unlock()
 	if s.encoder == nil {
 		s.buffer = bufio.NewWriter(s.stream)
-		s.encoder = msgpack.NewEncoder(s.buffer)
-		s.encoder.AddExtensions(s.stream.initializeExtensions())
+		s.encoder = s.stream.session.codec.NewEncoder(s.buffer, s.stream)
 	}
 
 	if err := s.encoder.Encode(message); err != nil {
@@ -243,14 +263,19 @@ func (s *sender) Close() error {
 	return s.stream.stream.Close()
 }
 
+var (
+	streamT = reflect.TypeOf(&stream{})
+	recvT   = reflect.TypeOf(&receiver{})
+	sendT   = reflect.TypeOf(&sender{})
+)
+
 // Receive receives a message sent across the channel from
 // a sender on the other side of the transport.
 func (r *receiver) Receive(message interface{}) error {
 	r.decodeLock.Lock()
 	defer r.decodeLock.Unlock()
 	if r.decoder == nil {
-		r.decoder = msgpack.NewDecoder(r.stream)
-		r.decoder.AddExtensions(r.stream.initializeExtensions())
+		r.decoder = r.stream.session.codec.NewDecoder(r.stream, r.stream, streamT, recvT, sendT)
 	}
 
 	decodeErr := r.decoder.Decode(message)
@@ -264,35 +289,19 @@ func (r *receiver) Receive(message interface{}) error {
 func (r *receiver) SendTo(dst libchan.Sender) (int, error) {
 	var n int
 	for {
-		var rm msgpack.RawMessage
-		if err := r.Receive(&rm); err == io.EOF {
+		rm := r.stream.session.codec.NewRawMessage()
+		if err := r.Receive(rm); err == io.EOF {
 			break
 		} else if err != nil {
 			return n, err
 		}
 
-		if err := dst.Send(&rm); err != nil {
+		if err := dst.Send(rm); err != nil {
 			return n, err
 		}
 		n++
 	}
 	return n, nil
-}
-
-func (*nopSender) Send(interface{}) error {
-	return ErrOperationNotAllowed
-}
-
-func (*nopSender) Close() error {
-	return ErrOperationNotAllowed
-}
-
-func (*nopReceiver) Receive(interface{}) error {
-	return ErrOperationNotAllowed
-}
-
-func (*nopReceiver) SendTo(libchan.Sender) (int, error) {
-	return 0, ErrOperationNotAllowed
 }
 
 func (s *stream) Read(b []byte) (int, error) {
