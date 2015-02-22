@@ -136,8 +136,8 @@ func SpawnProxyTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverR
 	endServer := make(chan bool)
 	endProxy := make(chan bool)
 
-	receiver1, sender1, err := Pipe()
-	receiver2, sender2, err := Pipe()
+	receiver1, sender1, err := testPipe()
+	receiver2, sender2, err := testPipe()
 
 	if err != nil {
 		t.Fatalf("Error creating pipe: %s", err)
