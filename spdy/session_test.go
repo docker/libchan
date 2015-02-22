@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/docker/libchan"
+	"github.com/docker/libchan/encoding/msgpack"
 )
 
 type InOutMessage struct {
@@ -448,7 +449,7 @@ func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s libchan.Transpor
 		if sessionErr != nil {
 			t.Fatalf("Error creating session: %s", sessionErr)
 		}
-		session := NewTransport(provider, &MsgpackCodec{})
+		session := NewTransport(provider, &msgpack.Codec{})
 
 		sender, senderErr := session.NewSendChannel()
 		if senderErr != nil {
@@ -480,7 +481,7 @@ func ServerReceiveWrapper(f func(t *testing.T, c libchan.Receiver, s libchan.Tra
 		if sessionErr != nil {
 			t.Fatalf("Error creating session: %s", sessionErr)
 		}
-		session := NewTransport(provider, &MsgpackCodec{})
+		session := NewTransport(provider, &msgpack.Codec{})
 
 		receiver, receiverErr := session.WaitReceiveChannel()
 		if receiverErr != nil {

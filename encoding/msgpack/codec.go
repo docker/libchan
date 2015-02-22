@@ -1,4 +1,4 @@
-package spdy
+package msgpack
 
 import (
 	"encoding/binary"
@@ -22,11 +22,11 @@ const (
 )
 
 type cproducer struct {
-	encoding.ChanProducer
+	encoding.ChannelFactory
 }
 
 type creceiver struct {
-	encoding.ChanReceiver
+	encoding.ChannelReceiver
 }
 
 func decodeReferenceID(b []byte) (referenceID uint64, err error) {
@@ -224,13 +224,13 @@ func (p *cproducer) encodeExtended(iv reflect.Value) (i int, b []byte, e error) 
 	return 0, nil, nil
 }
 
-// MsgpackCodec implements the libchan encoding using msgpack5.
-type MsgpackCodec struct{}
+// Codec implements the libchan encoding using msgpack5.
+type Codec struct{}
 
 // NewEncoder returns a libchan encoder which encodes given objects
 // to msgpack5 on the given datastream using the given encoding
 // channel producer.
-func (codec *MsgpackCodec) NewEncoder(w io.Writer, p encoding.ChanProducer) encoding.Encoder {
+func (codec *Codec) NewEncoder(w io.Writer, p encoding.ChannelFactory) encoding.Encoder {
 	prd := &cproducer{p}
 	encoder := msgpack.NewEncoder(w)
 	exts := msgpack.NewExtensions()
@@ -242,7 +242,7 @@ func (codec *MsgpackCodec) NewEncoder(w io.Writer, p encoding.ChanProducer) enco
 // NewDecoder returns a libchan decoder which decodes objects from
 // the given data stream from msgpack5 into provided object using
 // the provided types for libchan interfaces.
-func (codec *MsgpackCodec) NewDecoder(r io.Reader, recv encoding.ChanReceiver, streamT, recvT, sendT reflect.Type) encoding.Decoder {
+func (codec *Codec) NewDecoder(r io.Reader, recv encoding.ChannelReceiver, streamT, recvT, sendT reflect.Type) encoding.Decoder {
 	rec := &creceiver{recv}
 	decoder := msgpack.NewDecoder(r)
 	exts := msgpack.NewExtensions()
@@ -259,6 +259,6 @@ func (codec *MsgpackCodec) NewDecoder(r io.Reader, recv encoding.ChanReceiver, s
 // NewRawMessage returns a transit object which will copy a
 // msgpack5 datastream and allow decoding that object
 // using a Decoder from the codec object.
-func (codec *MsgpackCodec) NewRawMessage() encoding.Decoder {
+func (codec *Codec) NewRawMessage() encoding.Decoder {
 	return new(msgpack.RawMessage)
 }
