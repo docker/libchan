@@ -142,8 +142,8 @@ type MessageWithByteStream struct {
 }
 
 func TestByteStream(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Sender, s libchan.Transport) {
-		bs, bsErr := sender.(*channel).createByteStream()
+	client := func(t *testing.T, sndr libchan.Sender, s libchan.Transport) {
+		bs, bsErr := sndr.(*sender).stream.createByteStream()
 		if bsErr != nil {
 			t.Fatalf("Error creating byte stream: %s", bsErr)
 		}
@@ -158,7 +158,7 @@ func TestByteStream(t *testing.T) {
 			t.Fatalf("Error writing to byte stream: %s", writeErr)
 		}
 
-		sendErr := sender.Send(m1)
+		sendErr := sndr.Send(m1)
 		if sendErr != nil {
 			t.Fatalf("Error sending channel: %s", sendErr)
 		}
@@ -186,7 +186,7 @@ func TestByteStream(t *testing.T) {
 		if m1.Stream == nil {
 			t.Fatalf("Missing byte stream")
 		}
-		bs, bsOk := m1.Stream.(*byteStream)
+		bs, bsOk := m1.Stream.(*stream)
 		if !bsOk {
 			t.Fatalf("Wrong byte stream type: %T", m1.Stream)
 		}

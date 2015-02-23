@@ -5,9 +5,19 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"time"
 
 	"github.com/dmcgowan/msgpack"
 	"github.com/docker/libchan"
+)
+
+const (
+	duplexStreamCode    = 1
+	inboundStreamCode   = 2
+	outboundStreamCode  = 3
+	inboundChannelCode  = 4
+	outboundChannelCode = 5
+	timeCode            = 6
 )
 
 func decodeReferenceID(b []byte) (referenceID uint64, err error) {
@@ -32,21 +42,14 @@ func encodeReferenceID(b []byte, referenceID uint64) (n int) {
 	return
 }
 
-func (c *channel) channelBytes() ([]byte, error) {
-	buf := make([]byte, 9)
-	if c.direction == inbound {
-		buf[0] = 0x02 // Reverse direction
-	} else if c.direction == outbound {
-		buf[0] = 0x01 // Reverse direction
-	} else {
-		return nil, errors.New("invalid direction")
-	}
-	written := encodeReferenceID(buf[1:], c.referenceID)
-	return buf[:(written + 1)], nil
+func (s *stream) channelBytes() ([]byte, error) {
+	buf := make([]byte, 8)
+	written := encodeReferenceID(buf, s.referenceID)
+	return buf[:written], nil
 }
 
-func (c *channel) copySendChannel(send libchan.Sender) (*channel, error) {
-	recv, sendCopy, err := c.CreateNestedReceiver()
+func (s *stream) copySendChannel(send libchan.Sender) (*nopSender, error) {
+	recv, sendCopy, err := s.CreateNestedReceiver()
 	if err != nil {
 		return nil, err
 	}
@@ -55,11 +58,11 @@ func (c *channel) copySendChannel(send libchan.Sender) (*channel, error) {
 		libchan.Copy(send, recv)
 		send.Close()
 	}()
-	return sendCopy.(*channel), nil
+	return sendCopy.(*nopSender), nil
 }
 
-func (c *channel) copyReceiveChannel(recv libchan.Receiver) (*channel, error) {
-	send, recvCopy, err := c.CreateNestedSender()
+func (s *stream) copyReceiveChannel(recv libchan.Receiver) (*nopReceiver, error) {
+	send, recvCopy, err := s.CreateNestedSender()
 	if err != nil {
 		return nil, err
 	}
@@ -68,53 +71,134 @@ func (c *channel) copyReceiveChannel(recv libchan.Receiver) (*channel, error) {
 		libchan.Copy(send, recv)
 		send.Close()
 	}()
-	return recvCopy.(*channel), nil
+	return recvCopy.(*nopReceiver), nil
 }
 
-func (c *channel) decodeChannel(v reflect.Value, b []byte) error {
-	var d direction
-	if b[0] == 0x01 {
-		d = inbound
-	} else if b[0] == 0x02 {
-		d = outbound
-	} else {
-		return errors.New("unexpected direction")
+func (s *stream) decodeStream(b []byte) (*stream, error) {
+	referenceID, err := decodeReferenceID(b)
+	if err != nil {
+		return nil, err
 	}
-	referenceID, err := decodeReferenceID(b[1:])
+
+	gs := s.session.getStream(referenceID)
+	if gs == nil {
+		return nil, errors.New("stream does not exist")
+	}
+
+	return gs, nil
+}
+
+func (s *stream) decodeReceiver(v reflect.Value, b []byte) error {
+	bs, err := s.decodeStream(b)
 	if err != nil {
 		return err
 	}
 
-	ch := c.session.getChannel(referenceID)
-	if ch == nil {
-		return errors.New("channel does not exist")
-	}
-	// TODO lock channel while check and setting
-	if ch.direction != 0 && ch.direction != d {
-		return ErrWrongDirection
-	}
-	ch.direction = d
-
-	v.Set(reflect.ValueOf(ch))
+	v.Set(reflect.ValueOf(&receiver{stream: bs}))
 
 	return nil
 }
 
-func (b *byteStream) streamBytes() ([]byte, error) {
+func (s *stream) decodeSender(v reflect.Value, b []byte) error {
+	bs, err := s.decodeStream(b)
+	if err != nil {
+		return err
+	}
+
+	v.Set(reflect.ValueOf(&sender{stream: bs}))
+
+	return nil
+}
+
+func (s *stream) streamBytes() ([]byte, error) {
 	var buf [8]byte
-	written := encodeReferenceID(buf[:], b.referenceID)
+	written := encodeReferenceID(buf[:], s.referenceID)
 
 	return buf[:written], nil
 }
 
-func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
+func (s *stream) decodeWStream(v reflect.Value, b []byte) error {
+	bs, err := s.decodeStream(b)
+	if err != nil {
+		return err
+	}
+
+	v.Set(reflect.ValueOf(bs))
+
+	return nil
+}
+
+func (s *stream) decodeRStream(v reflect.Value, b []byte) error {
+	bs, err := s.decodeStream(b)
+	if err != nil {
+		return err
+	}
+
+	v.Set(reflect.ValueOf(bs))
+
+	return nil
+}
+
+func encodeTime(t *time.Time) ([]byte, error) {
+	var b [12]byte
+	binary.BigEndian.PutUint64(b[0:8], uint64(t.Unix()))
+	binary.BigEndian.PutUint32(b[8:12], uint32(t.Nanosecond()))
+	return b[:], nil
+}
+
+func decodeTime(v reflect.Value, b []byte) error {
+	if len(b) != 12 {
+		return errors.New("Invalid length")
+	}
+	t := time.Unix(int64(binary.BigEndian.Uint64(b[0:8])), int64(binary.BigEndian.Uint32(b[8:12])))
+
+	if v.Kind() == reflect.Ptr {
+		v.Set(reflect.ValueOf(&t))
+	} else {
+		v.Set(reflect.ValueOf(t))
+	}
+
+	return nil
+}
+
+func (s *stream) encodeExtended(iv reflect.Value) (i int, b []byte, e error) {
 	switch v := iv.Interface().(type) {
-	case *byteStream:
+	case *nopSender:
+		if v.stream == nil {
+			return 0, nil, errors.New("bad type")
+		}
+		if v.stream.session != s.session {
+			rc, err := s.copySendChannel(v)
+			if err != nil {
+				return 0, nil, err
+			}
+			b, err := rc.stream.channelBytes()
+			return inboundChannelCode, b, err
+		}
+
+		b, err := v.stream.channelBytes()
+		return inboundChannelCode, b, err
+	case *nopReceiver:
+		if v.stream == nil {
+			return 0, nil, errors.New("bad type")
+		}
+		if v.stream.session != s.session {
+			rc, err := s.copyReceiveChannel(v)
+			if err != nil {
+				return 0, nil, err
+			}
+			b, err := rc.stream.channelBytes()
+			return outboundChannelCode, b, err
+		}
+
+		b, err := v.stream.channelBytes()
+		return outboundChannelCode, b, err
+	case *stream:
 		if v.referenceID == 0 {
 			return 0, nil, errors.New("bad type")
 		}
-		if v.session != c.session {
-			streamCopy, err := c.createByteStream()
+		if v.session != s.session {
+			streamCopy, err := s.createByteStream()
 			if err != nil {
 				return 0, nil, err
 			}
@@ -126,14 +210,29 @@ func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
 				io.Copy(w, streamCopy)
 				w.Close()
 			}(v)
-			v = streamCopy.(*byteStream)
+			v = streamCopy
 
 		}
-		b, err := v.streamBytes()
-		return 2, b, err
+		b, err := v.channelBytes()
+		return duplexStreamCode, b, err
+	case libchan.Sender:
+		copyCh, err := s.copySendChannel(v)
+		if err != nil {
+			return 0, nil, err
+		}
+		b, err := copyCh.stream.channelBytes()
+		return inboundChannelCode, b, err
+	case libchan.Receiver:
+		copyCh, err := s.copyReceiveChannel(v)
+		if err != nil {
+			return 0, nil, err
+		}
+		b, err := copyCh.stream.channelBytes()
+		return outboundChannelCode, b, err
+
 	case io.Reader:
 		// Either ReadWriteCloser, ReadWriter, or ReadCloser
-		streamCopy, err := c.createByteStream()
+		streamCopy, err := s.createByteStream()
 		if err != nil {
 			return 0, nil, err
 		}
@@ -141,20 +240,23 @@ func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
 			io.Copy(streamCopy, v)
 			streamCopy.Close()
 		}()
+		code := outboundStreamCode
 		if wc, ok := v.(io.WriteCloser); ok {
 			go func() {
 				io.Copy(wc, streamCopy)
 				wc.Close()
 			}()
+			code = duplexStreamCode
 		} else if w, ok := v.(io.Writer); ok {
 			go func() {
 				io.Copy(w, streamCopy)
 			}()
+			code = duplexStreamCode
 		}
-		b, err := streamCopy.(*byteStream).streamBytes()
-		return 2, b, err
+		b, err := streamCopy.streamBytes()
+		return code, b, err
 	case io.Writer:
-		streamCopy, err := c.createByteStream()
+		streamCopy, err := s.createByteStream()
 		if err != nil {
 			return 0, nil, err
 		}
@@ -168,64 +270,24 @@ func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
 				io.Copy(v, streamCopy)
 			}()
 		}
-		b, err := streamCopy.(*byteStream).streamBytes()
-		return 2, b, err
-	case *channel:
-		if v.stream == nil {
-			return 0, nil, errors.New("bad type")
-		}
-		if v.session != c.session {
-			var rc *channel
-			var err error
-			if c.direction == inbound {
-				rc, err = c.copyReceiveChannel(v)
-			} else {
-				rc, err = c.copySendChannel(v)
-			}
-			if err != nil {
-				return 0, nil, err
-			}
-			b, err := rc.channelBytes()
-			return 1, b, err
-		}
-		b, err := v.channelBytes()
-		return 1, b, err
-	case libchan.Sender:
-		copyCh, err := c.copySendChannel(v)
-		if err != nil {
-			return 0, nil, err
-		}
-		b, err := copyCh.channelBytes()
-		return 1, b, err
-	case libchan.Receiver:
-		copyCh, err := c.copyReceiveChannel(v)
-		if err != nil {
-			return 0, nil, err
-		}
-		b, err := copyCh.channelBytes()
-		return 1, b, err
+
+		b, err := streamCopy.streamBytes()
+		return inboundStreamCode, b, err
+	case *time.Time:
+		b, err := encodeTime(v)
+		return timeCode, b, err
 	}
 	return 0, nil, nil
 }
 
-func (c *channel) decodeStream(v reflect.Value, b []byte) error {
-	referenceID, err := decodeReferenceID(b)
-	if err != nil {
-		return err
-	}
-
-	bs := c.session.getByteStream(referenceID)
-	if bs != nil {
-		v.Set(reflect.ValueOf(bs))
-	}
-
-	return nil
-}
-
-func (c *channel) initializeExtensions() *msgpack.Extensions {
+func (s *stream) initializeExtensions() *msgpack.Extensions {
 	exts := msgpack.NewExtensions()
-	exts.SetEncoder(c.encodeExtension)
-	exts.AddDecoder(1, reflect.TypeOf(&channel{}), c.decodeChannel)
-	exts.AddDecoder(2, reflect.TypeOf(&byteStream{}), c.decodeStream)
+	exts.SetEncoder(s.encodeExtended)
+	exts.AddDecoder(duplexStreamCode, reflect.TypeOf(&stream{}), s.decodeWStream)
+	exts.AddDecoder(inboundStreamCode, reflect.TypeOf(&stream{}), s.decodeWStream)
+	exts.AddDecoder(outboundStreamCode, reflect.TypeOf(&stream{}), s.decodeRStream)
+	exts.AddDecoder(inboundChannelCode, reflect.TypeOf(&sender{}), s.decodeSender)
+	exts.AddDecoder(outboundChannelCode, reflect.TypeOf(&receiver{}), s.decodeReceiver)
+	exts.AddDecoder(timeCode, reflect.TypeOf(&time.Time{}), decodeTime)
 	return exts
 }

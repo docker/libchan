@@ -7,51 +7,54 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dmcgowan/msgpack"
 	"github.com/docker/libchan"
 )
 
-type direction uint8
-
-const (
-	outbound = direction(0x01)
-	inbound  = direction(0x02)
-)
-
 var (
-	// ErrWrongDirection occurs when an illegal action is
-	// attempted on a channel because of its direction.
-	ErrWrongDirection = errors.New("wrong channel direction")
+	// ErrOperationNotAllowed occurs when an action is attempted
+	// on a nop object.
+	ErrOperationNotAllowed = errors.New("operation not allowed")
 )
 
 // Transport is a transport session on top of a network
 // connection using spdy.
 type Transport struct {
-	provider StreamProvider
-
-	// TODO unify channel and streams maps with libchanStream type
-	receiverChan chan *channel
-	channelC     *sync.Cond
-	channels     map[uint64]*channel
-
-	referenceLock    sync.Mutex
+	provider         StreamProvider
 	referenceCounter uint64
-	byteStreamC      *sync.Cond
-	byteStreams      map[uint64]*byteStream
+	receiverChan     chan *receiver
+	streamC          *sync.Cond
+	streams          map[uint64]*stream
 }
 
-type channel struct {
+type stream struct {
 	referenceID uint64
 	parentID    uint64
 	stream      Stream
 	session     *Transport
-	direction   direction
-	encodeLock  sync.Mutex
-	encoder     *msgpack.Encoder
-	decodeLock  sync.Mutex
-	decoder     *msgpack.Decoder
-	buffer      *bufio.Writer
+}
+
+type sender struct {
+	stream     *stream
+	encodeLock sync.Mutex
+	encoder    *msgpack.Encoder
+	buffer     *bufio.Writer
+}
+
+type receiver struct {
+	stream     *stream
+	decodeLock sync.Mutex
+	decoder    *msgpack.Decoder
+}
+
+type nopReceiver struct {
+	stream *stream
+}
+
+type nopSender struct {
+	stream *stream
 }
 
 // NewTransport returns an object implementing the
@@ -59,12 +62,10 @@ type channel struct {
 func NewTransport(provider StreamProvider) libchan.Transport {
 	session := &Transport{
 		provider:         provider,
-		receiverChan:     make(chan *channel),
-		channelC:         sync.NewCond(new(sync.Mutex)),
-		channels:         make(map[uint64]*channel),
 		referenceCounter: 1,
-		byteStreamC:      sync.NewCond(new(sync.Mutex)),
-		byteStreams:      make(map[uint64]*byteStream),
+		receiverChan:     make(chan *receiver),
+		streamC:          sync.NewCond(new(sync.Mutex)),
+		streams:          make(map[uint64]*stream),
 	}
 
 	go session.handleStreams()
@@ -75,130 +76,62 @@ func NewTransport(provider StreamProvider) libchan.Transport {
 func (s *Transport) handleStreams() {
 	listener := s.provider.Listen()
 	for {
-		stream, err := listener.Accept()
+		strm, err := listener.Accept()
 		if err != nil {
 			if err != io.EOF {
-				// TODO: stream handle error
+				// TODO: strm handle error
 			}
 			break
 		}
-		headers := stream.Headers()
+		headers := strm.Headers()
 		referenceIDString := headers.Get("libchan-ref")
 		parentIDString := headers.Get("libchan-parent-ref")
 
 		referenceID, parseErr := strconv.ParseUint(referenceIDString, 10, 64)
 		if parseErr != nil {
-			// TODO: bad stream error
-			stream.Reset()
+			// TODO: bad strm error
+			strm.Reset()
 		} else {
-			if parentIDString == "" {
-				byteStream := &byteStream{
-					referenceID: referenceID,
-					stream:      stream,
-					session:     s,
-				}
-				s.byteStreamC.L.Lock()
-				s.byteStreams[referenceID] = byteStream
-				s.byteStreamC.Broadcast()
-				s.byteStreamC.L.Unlock()
-			} else {
-				parentID, parseErr := strconv.ParseUint(parentIDString, 10, 64)
+			var parentID uint64
+			if parentIDString != "" {
+				parsedID, parseErr := strconv.ParseUint(parentIDString, 10, 64)
 				if parseErr != nil {
-					// TODO: bad stream error
-					stream.Reset()
-				} else {
-					c := &channel{
-						referenceID: referenceID,
-						parentID:    parentID,
-						stream:      stream,
-						session:     s,
-					}
-
-					s.channelC.L.Lock()
-					s.channels[referenceID] = c
-					s.channelC.Broadcast()
-					s.channelC.L.Unlock()
-
-					if parentID == 0 {
-						c.direction = inbound
-						s.receiverChan <- c
-					}
-
+					// TODO: bad strm error
+					strm.Reset()
 				}
+				parentID = parsedID
 			}
+
+			newStream := &stream{
+				referenceID: referenceID,
+				parentID:    parentID,
+				stream:      strm,
+				session:     s,
+			}
+
+			s.streamC.L.Lock()
+			s.streams[referenceID] = newStream
+			s.streamC.Broadcast()
+			s.streamC.L.Unlock()
+
+			if parentID == 0 {
+				s.receiverChan <- &receiver{stream: newStream}
+			}
+
 		}
 	}
 }
 
-func (s *Transport) getByteStream(referenceID uint64) *byteStream {
-	s.byteStreamC.L.Lock()
-	bs, ok := s.byteStreams[referenceID]
-	if !ok {
-		s.byteStreamC.Wait()
-		bs, ok = s.byteStreams[referenceID]
+func (s *Transport) getStream(referenceID uint64) *stream {
+	s.streamC.L.Lock()
+	c, ok := s.streams[referenceID]
+	for i := 0; i < 10 && !ok; i++ {
+		s.streamC.Wait()
+		c, ok = s.streams[referenceID]
 	}
-	s.byteStreamC.L.Unlock()
-	return bs
-}
-
-func (s *Transport) getChannel(referenceID uint64) *channel {
-	s.channelC.L.Lock()
-	c, ok := s.channels[referenceID]
-	if !ok {
-		s.channelC.Wait()
-		c, ok = s.channels[referenceID]
-	}
-	s.channelC.L.Unlock()
+	s.streamC.L.Unlock()
 	return c
-}
 
-func (s *Transport) dial(referenceID, parentID uint64) (*byteStream, error) {
-	headers := http.Header{}
-	headers.Set("libchan-ref", strconv.FormatUint(referenceID, 10))
-	// TODO: Add this to implement protocol
-	//headers.Set("libchan-parent-ref", strconv.FormatUint(parentID, 10))
-	stream, streamErr := s.provider.NewStream(headers)
-	if streamErr != nil {
-		return nil, streamErr
-	}
-	bs := &byteStream{
-		referenceID: referenceID,
-		stream:      stream,
-		session:     s,
-	}
-	return bs, nil
-}
-
-func (s *Transport) nextReferenceID() uint64 {
-	s.referenceLock.Lock()
-	referenceID := s.referenceCounter
-	s.referenceCounter = referenceID + 2
-	s.referenceLock.Unlock()
-	return referenceID
-}
-
-func (c *channel) createByteStream() (io.ReadWriteCloser, error) {
-	referenceID := c.session.nextReferenceID()
-
-	byteStream, bsErr := c.session.dial(referenceID, c.referenceID)
-	if bsErr != nil {
-		return nil, bsErr
-	}
-	byteStream.referenceID = referenceID
-
-	c.session.byteStreamC.L.Lock()
-	c.session.byteStreams[referenceID] = byteStream
-	c.session.byteStreamC.L.Unlock()
-
-	return byteStream, nil
-}
-
-func addrKey(local, remote string) string {
-	b := make([]byte, len(local)+len(remote)+2)
-	copy(b, local)
-	copy(b[len(local):], "<>")
-	copy(b[len(local)+2:], remote)
-	return string(b)
 }
 
 // Close closes the underlying stream provider
@@ -206,31 +139,49 @@ func (s *Transport) Close() error {
 	return s.provider.Close()
 }
 
+func (s *Transport) createSubStream(parentID uint64) (*stream, error) {
+	referenceID := atomic.AddUint64(&s.referenceCounter, 1)
+	headers := http.Header{}
+	headers.Set("libchan-ref", strconv.FormatUint(referenceID, 10))
+	if parentID > 0 {
+		headers.Set("libchan-parent-ref", strconv.FormatUint(parentID, 10))
+	}
+
+	providedStream, err := s.provider.NewStream(headers)
+	if err != nil {
+		return nil, err
+	}
+
+	newStream := &stream{
+		referenceID: referenceID,
+		parentID:    parentID,
+		stream:      providedStream,
+		session:     s,
+	}
+
+	// TODO: Do not store reference
+	s.streamC.L.Lock()
+	s.streams[referenceID] = newStream
+	s.streamC.L.Unlock()
+
+	return newStream, nil
+
+}
+func (s *stream) createByteStream() (*stream, error) {
+	return s.session.createSubStream(s.referenceID)
+}
+
 // NewSendChannel creates and returns a new send channel.  The receive
 // end will get picked up on the remote end through the remote calling
 // WaitReceiveChannel.
 func (s *Transport) NewSendChannel() (libchan.Sender, error) {
-	referenceID := s.nextReferenceID()
-	headers := http.Header{}
-	headers.Set("libchan-ref", strconv.FormatUint(referenceID, 10))
-	headers.Set("libchan-parent-ref", "0")
-
-	stream, streamErr := s.provider.NewStream(headers)
-	if streamErr != nil {
-		return nil, streamErr
-	}
-	c := &channel{
-		referenceID: referenceID,
-		stream:      stream,
-		session:     s,
-		direction:   outbound,
+	stream, err := s.createSubStream(0)
+	if err != nil {
+		return nil, err
 	}
 
-	s.channelC.L.Lock()
-	s.channels[referenceID] = c
-	s.channelC.L.Unlock()
-
-	return c, nil
+	// TODO check synchronized
+	return &sender{stream: stream}, nil
 }
 
 // WaitReceiveChannel waits for a new channel be created by a remote
@@ -244,101 +195,77 @@ func (s *Transport) WaitReceiveChannel() (libchan.Receiver, error) {
 	return r, nil
 }
 
-func (c *channel) createSubChannel(direction direction) (libchan.Sender, libchan.Receiver, error) {
-	if c.direction == inbound {
-		return nil, nil, errors.New("cannot create sub channel of an inbound channel")
-	}
-	referenceID := c.session.nextReferenceID()
-	headers := http.Header{}
-	headers.Set("libchan-ref", strconv.FormatUint(referenceID, 10))
-	headers.Set("libchan-parent-ref", strconv.FormatUint(c.referenceID, 10))
-
-	stream, streamErr := c.session.provider.NewStream(headers)
-	if streamErr != nil {
-		return nil, nil, streamErr
-	}
-	subChannel := &channel{
-		referenceID: referenceID,
-		parentID:    c.referenceID,
-		stream:      stream,
-		session:     c.session,
-		direction:   direction,
-	}
-
-	c.session.channelC.L.Lock()
-	c.session.channels[referenceID] = subChannel
-	c.session.channelC.L.Unlock()
-
-	return subChannel, subChannel, nil
-}
-
 // CreateNestedReceiver creates a new channel returning the local
 // receiver and the remote sender.  The remote sender needs to be
 // sent across the channel before being utilized.
-func (c *channel) CreateNestedReceiver() (libchan.Receiver, libchan.Sender, error) {
-	send, recv, err := c.createSubChannel(inbound)
-	return recv, send, err
+func (s *stream) CreateNestedReceiver() (libchan.Receiver, libchan.Sender, error) {
+	stream, err := s.session.createSubStream(s.referenceID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &receiver{stream: stream}, &nopSender{stream: stream}, err
 }
 
 // CreateNestedReceiver creates a new channel returning the local
 // sender and the remote receiver.  The remote receiver needs to be
 // sent across the channel before being utilized.
-func (c *channel) CreateNestedSender() (libchan.Sender, libchan.Receiver, error) {
-	return c.createSubChannel(outbound)
+func (s *stream) CreateNestedSender() (libchan.Sender, libchan.Receiver, error) {
+	stream, err := s.session.createSubStream(s.referenceID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &sender{stream: stream}, &nopReceiver{stream: stream}, err
 }
 
 // Send sends a message across the channel to a receiver on the
 // other side of the transport.
-func (c *channel) Send(message interface{}) error {
-	if c.direction == inbound {
-		return ErrWrongDirection
+func (s *sender) Send(message interface{}) error {
+	s.encodeLock.Lock()
+	defer s.encodeLock.Unlock()
+	if s.encoder == nil {
+		s.buffer = bufio.NewWriter(s.stream)
+		s.encoder = msgpack.NewEncoder(s.buffer)
+		s.encoder.AddExtensions(s.stream.initializeExtensions())
 	}
 
-	c.encodeLock.Lock()
-	defer c.encodeLock.Unlock()
-	if c.encoder == nil {
-		c.buffer = bufio.NewWriter(c.stream)
-		c.encoder = msgpack.NewEncoder(c.buffer)
-		c.encoder.AddExtensions(c.initializeExtensions())
-	}
-
-	if err := c.encoder.Encode(message); err != nil {
+	if err := s.encoder.Encode(message); err != nil {
 		return err
 	}
 
-	return c.buffer.Flush()
+	return s.buffer.Flush()
+}
+
+// Close closes the underlying stream, causing any subsequent
+// sends to throw an error and receives to return EOF.
+func (s *sender) Close() error {
+	return s.stream.stream.Close()
 }
 
 // Receive receives a message sent across the channel from
 // a sender on the other side of the transport.
-func (c *channel) Receive(message interface{}) error {
-	if c.direction == outbound {
-		return ErrWrongDirection
+func (r *receiver) Receive(message interface{}) error {
+	r.decodeLock.Lock()
+	defer r.decodeLock.Unlock()
+	if r.decoder == nil {
+		r.decoder = msgpack.NewDecoder(r.stream)
+		r.decoder.AddExtensions(r.stream.initializeExtensions())
 	}
 
-	c.decodeLock.Lock()
-	defer c.decodeLock.Unlock()
-	if c.decoder == nil {
-		c.decoder = msgpack.NewDecoder(c.stream)
-		c.decoder.AddExtensions(c.initializeExtensions())
-	}
-
-	decodeErr := c.decoder.Decode(message)
+	decodeErr := r.decoder.Decode(message)
 	if decodeErr == io.EOF {
-		c.stream.Close()
-		c.decoder = nil
+		r.stream.Close()
+		r.decoder = nil
 	}
 	return decodeErr
 }
 
-func (c *channel) SendTo(dst libchan.Sender) (int, error) {
-	if c.direction == outbound {
-		return 0, ErrWrongDirection
-	}
+func (r *receiver) SendTo(dst libchan.Sender) (int, error) {
 	var n int
 	for {
 		var rm msgpack.RawMessage
-		if err := c.Receive(&rm); err == io.EOF {
+		if err := r.Receive(&rm); err == io.EOF {
 			break
 		} else if err != nil {
 			return n, err
@@ -352,35 +279,30 @@ func (c *channel) SendTo(dst libchan.Sender) (int, error) {
 	return n, nil
 }
 
-// Close closes the underlying stream, causing any subsequent
-// sends to throw an error and receives to return EOF.
-func (c *channel) Close() error {
-	return c.stream.Close()
+func (*nopSender) Send(interface{}) error {
+	return ErrOperationNotAllowed
 }
 
-type byteStream struct {
-	stream      io.ReadWriteCloser
-	referenceID uint64
-	session     *Transport
+func (*nopSender) Close() error {
+	return ErrOperationNotAllowed
 }
 
-func (b *byteStream) Read(p []byte) (n int, err error) {
-	if b == nil || b.stream == nil {
-		return 0, errors.New("byte stream is nil")
-	}
-	return b.stream.Read(p)
+func (*nopReceiver) Receive(interface{}) error {
+	return ErrOperationNotAllowed
 }
 
-func (b *byteStream) Write(data []byte) (n int, err error) {
-	if b == nil || b.stream == nil {
-		return 0, errors.New("byte stream is nil")
-	}
-	return b.stream.Write(data)
+func (*nopReceiver) SendTo(libchan.Sender) (int, error) {
+	return 0, ErrOperationNotAllowed
 }
 
-func (b *byteStream) Close() error {
-	if b == nil || b.stream == nil {
-		return errors.New("byte stream is nil")
-	}
-	return b.stream.Close()
+func (s *stream) Read(b []byte) (int, error) {
+	return s.stream.Read(b)
+}
+
+func (s *stream) Write(b []byte) (int, error) {
+	return s.stream.Write(b)
+}
+
+func (s *stream) Close() error {
+	return s.stream.Close()
 }
