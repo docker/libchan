@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmcgowan/streams/spdy"
 	"github.com/docker/libchan"
 	"github.com/docker/libchan/encoding/msgpack"
 )
@@ -17,13 +18,13 @@ import (
 func testPipe() (libchan.Receiver, libchan.Sender, error) {
 	c1, c2 := net.Pipe()
 
-	s1, err := NewSpdyStreamProvider(c1, false)
+	s1, err := spdy.NewSpdyStreamProvider(c1, false)
 	if err != nil {
 		return nil, nil, err
 	}
 	t1 := NewTransport(s1, &msgpack.Codec{})
 
-	s2, err := NewSpdyStreamProvider(c2, true)
+	s2, err := spdy.NewSpdyStreamProvider(c2, true)
 	if err != nil {
 		return nil, nil, err
 	}

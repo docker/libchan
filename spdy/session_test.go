@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmcgowan/streams/spdy"
 	"github.com/docker/libchan"
 	"github.com/docker/libchan/encoding/msgpack"
 )
@@ -445,7 +446,7 @@ func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s libchan.Transpor
 		}
 
 		// Use SPDY
-		provider, sessionErr := NewSpdyStreamProvider(conn, false)
+		provider, sessionErr := spdy.NewSpdyStreamProvider(conn, false)
 		if sessionErr != nil {
 			t.Fatalf("Error creating session: %s", sessionErr)
 		}
@@ -477,7 +478,7 @@ func ServerReceiveWrapper(f func(t *testing.T, c libchan.Receiver, s libchan.Tra
 			t.Fatalf("Error accepting connection: %s", connErr)
 		}
 
-		provider, sessionErr := NewSpdyStreamProvider(conn, true)
+		provider, sessionErr := spdy.NewSpdyStreamProvider(conn, true)
 		if sessionErr != nil {
 			t.Fatalf("Error creating session: %s", sessionErr)
 		}

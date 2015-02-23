@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/dmcgowan/streams"
 	"github.com/docker/libchan"
 	"github.com/docker/libchan/encoding"
 )
@@ -23,7 +24,7 @@ var (
 // Transport is a transport session on top of a network
 // connection using spdy.
 type Transport struct {
-	provider         StreamProvider
+	provider         streams.StreamProvider
 	referenceCounter uint64
 	receiverChan     chan *receiver
 	streamC          *sync.Cond
@@ -34,7 +35,7 @@ type Transport struct {
 type stream struct {
 	referenceID uint64
 	parentID    uint64
-	stream      Stream
+	stream      streams.Stream
 	session     *Transport
 }
 
@@ -53,7 +54,7 @@ type receiver struct {
 
 // NewTransport returns an object implementing the
 // libchan Transport interface using a stream provider.
-func NewTransport(provider StreamProvider, codec encoding.ChannelCodec) libchan.Transport {
+func NewTransport(provider streams.StreamProvider, codec encoding.ChannelCodec) libchan.Transport {
 	session := &Transport{
 		provider:         provider,
 		referenceCounter: 1,
