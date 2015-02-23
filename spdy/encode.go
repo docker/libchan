@@ -3,7 +3,6 @@ package spdy
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"reflect"
 
@@ -72,43 +71,6 @@ func (c *channel) copyReceiveChannel(recv libchan.Receiver) (*channel, error) {
 	return recvCopy.(*channel), nil
 }
 
-func (c *channel) encodeChannel(iv reflect.Value) ([]byte, error) {
-	switch v := iv.Interface().(type) {
-	case *channel:
-		if v.stream == nil {
-			return nil, errors.New("bad type")
-		}
-		if v.session != c.session {
-			var rc *channel
-			var err error
-			if c.direction == inbound {
-				rc, err = c.copyReceiveChannel(v)
-			} else {
-				rc, err = c.copySendChannel(v)
-			}
-			if err != nil {
-				return nil, err
-			}
-			return rc.channelBytes()
-		}
-
-		return v.channelBytes()
-	case libchan.Sender:
-		copyCh, err := c.copySendChannel(v)
-		if err != nil {
-			return nil, err
-		}
-		return copyCh.channelBytes()
-	case libchan.Receiver:
-		copyCh, err := c.copyReceiveChannel(v)
-		if err != nil {
-			return nil, err
-		}
-		return copyCh.channelBytes()
-	}
-	return nil, fmt.Errorf("unsupported channel type: %T", iv.Interface())
-}
-
 func (c *channel) decodeChannel(v reflect.Value, b []byte) error {
 	var d direction
 	if b[0] == 0x01 {
@@ -145,16 +107,16 @@ func (b *byteStream) streamBytes() ([]byte, error) {
 	return buf[:written], nil
 }
 
-func (s *Transport) encodeStream(iv reflect.Value) ([]byte, error) {
+func (c *channel) encodeExtension(iv reflect.Value) (int, []byte, error) {
 	switch v := iv.Interface().(type) {
 	case *byteStream:
 		if v.referenceID == 0 {
-			return nil, errors.New("bad type")
+			return 0, nil, errors.New("bad type")
 		}
-		if v.session != s {
-			streamCopy, err := s.createByteStream()
+		if v.session != c.session {
+			streamCopy, err := c.session.createByteStream()
 			if err != nil {
-				return nil, err
+				return 0, nil, err
 			}
 			go func(r io.Reader) {
 				io.Copy(streamCopy, r)
@@ -167,12 +129,13 @@ func (s *Transport) encodeStream(iv reflect.Value) ([]byte, error) {
 			v = streamCopy.(*byteStream)
 
 		}
-		return v.streamBytes()
+		b, err := v.streamBytes()
+		return 2, b, err
 	case io.Reader:
 		// Either ReadWriteCloser, ReadWriter, or ReadCloser
-		streamCopy, err := s.createByteStream()
+		streamCopy, err := c.session.createByteStream()
 		if err != nil {
-			return nil, err
+			return 0, nil, err
 		}
 		go func() {
 			io.Copy(streamCopy, v)
@@ -188,11 +151,12 @@ func (s *Transport) encodeStream(iv reflect.Value) ([]byte, error) {
 				io.Copy(w, streamCopy)
 			}()
 		}
-		return streamCopy.(*byteStream).streamBytes()
+		b, err := streamCopy.(*byteStream).streamBytes()
+		return 2, b, err
 	case io.Writer:
-		streamCopy, err := s.createByteStream()
+		streamCopy, err := c.session.createByteStream()
 		if err != nil {
-			return nil, err
+			return 0, nil, err
 		}
 		if wc, ok := v.(io.WriteCloser); ok {
 			go func() {
@@ -204,10 +168,44 @@ func (s *Transport) encodeStream(iv reflect.Value) ([]byte, error) {
 				io.Copy(v, streamCopy)
 			}()
 		}
-
-		return streamCopy.(*byteStream).streamBytes()
+		b, err := streamCopy.(*byteStream).streamBytes()
+		return 2, b, err
+	case *channel:
+		if v.stream == nil {
+			return 0, nil, errors.New("bad type")
+		}
+		if v.session != c.session {
+			var rc *channel
+			var err error
+			if c.direction == inbound {
+				rc, err = c.copyReceiveChannel(v)
+			} else {
+				rc, err = c.copySendChannel(v)
+			}
+			if err != nil {
+				return 0, nil, err
+			}
+			b, err := rc.channelBytes()
+			return 1, b, err
+		}
+		b, err := v.channelBytes()
+		return 1, b, err
+	case libchan.Sender:
+		copyCh, err := c.copySendChannel(v)
+		if err != nil {
+			return 0, nil, err
+		}
+		b, err := copyCh.channelBytes()
+		return 1, b, err
+	case libchan.Receiver:
+		copyCh, err := c.copyReceiveChannel(v)
+		if err != nil {
+			return 0, nil, err
+		}
+		b, err := copyCh.channelBytes()
+		return 1, b, err
 	}
-	return nil, fmt.Errorf("unsupported stream type: %T", iv.Interface())
+	return 0, nil, nil
 }
 
 func (s *Transport) decodeStream(v reflect.Value, b []byte) error {
@@ -226,15 +224,8 @@ func (s *Transport) decodeStream(v reflect.Value, b []byte) error {
 
 func (c *channel) initializeExtensions() *msgpack.Extensions {
 	exts := msgpack.NewExtensions()
-	chanInterfaces := []reflect.Type{
-		reflect.TypeOf(new(libchan.Sender)),
-		reflect.TypeOf(new(libchan.Receiver)),
-	}
-	streamInterfaces := []reflect.Type{
-		reflect.TypeOf(new(io.Reader)),
-		reflect.TypeOf(new(io.Writer)),
-	}
-	exts.AddExtension(1, reflect.TypeOf(&channel{}), chanInterfaces, c.encodeChannel, c.decodeChannel)
-	exts.AddExtension(2, reflect.TypeOf(&byteStream{}), streamInterfaces, c.session.encodeStream, c.session.decodeStream)
+	exts.SetEncoder(c.encodeExtension)
+	exts.AddDecoder(1, reflect.TypeOf(&channel{}), c.decodeChannel)
+	exts.AddDecoder(2, reflect.TypeOf(&byteStream{}), c.session.decodeStream)
 	return exts
 }
