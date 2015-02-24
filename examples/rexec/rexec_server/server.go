@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"syscall"
 
+	"github.com/dmcgowan/streams/spdy"
 	"github.com/docker/libchan"
-	"github.com/docker/libchan/spdy"
+	"github.com/docker/libchan/encoding/msgpack"
+	"github.com/docker/libchan/netchan"
 )
 
 // RemoteCommand is the received command parameters to execute locally and return
@@ -56,17 +58,17 @@ func main() {
 		}
 	}
 
-	tl, err := spdy.NewTransportListener(listener, spdy.NoAuthenticator)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	for {
-		t, err := tl.AcceptTransport()
+		conn, err := listener.Accept()
 		if err != nil {
 			log.Print(err)
 			break
 		}
+		provider, err := spdy.NewSpdyStreamProvider(conn, true)
+		if err != nil {
+			log.Fatal(err)
+		}
+		t := netchan.NewTransport(provider, &msgpack.Codec{})
 
 		go func() {
 			for {
