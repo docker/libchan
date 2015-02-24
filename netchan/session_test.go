@@ -1,4 +1,4 @@
-package spdy
+package netchan
 
 import (
 	"bufio"

@@ -1,4 +1,4 @@
-package spdy
+package netchan
 
 import (
 	"bufio"
@@ -22,7 +22,7 @@ var (
 )
 
 // Transport is a transport session on top of a network
-// connection using spdy.
+// connection using a stream provider.
 type Transport struct {
 	provider         streams.StreamProvider
 	referenceCounter uint64
