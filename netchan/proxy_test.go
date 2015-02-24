@@ -1,4 +1,4 @@
-package spdy
+package netchan
 
 import (
 	"io"
@@ -48,8 +48,8 @@ func TestChannelProxy(t *testing.T) {
 				t.Fatalf("Error receiving ack: %s", err)
 			}
 
-			if ack.N != i {
-				t.Fatalf("Unexpected ack value\n\tExpected: %d\n\tActual: %d", i, ack.N)
+			if ack.N != (i + 1) {
+				t.Fatalf("Unexpected ack value\n\tExpected: %d\n\tActual: %d", (i + 1), ack.N)
 			}
 
 			if ack.MessageLen != len(m) {
@@ -70,7 +70,7 @@ func TestChannelProxy(t *testing.T) {
 				t.Fatalf("Unexpected message:\n\tExpected: %s\n\tActual: %s", m, message.Message)
 			}
 
-			ack := &ProxyAckMessage{N: i, MessageLen: len(message.Message)}
+			ack := &ProxyAckMessage{N: i + 1, MessageLen: len(message.Message)}
 			err = message.Ret.Send(ack)
 			if err != nil {
 				t.Fatalf("Error sending ack: %s", err)
@@ -136,8 +136,8 @@ func SpawnProxyTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverR
 	endServer := make(chan bool)
 	endProxy := make(chan bool)
 
-	receiver1, sender1, err := Pipe()
-	receiver2, sender2, err := Pipe()
+	receiver1, sender1, err := testPipe()
+	receiver2, sender2, err := testPipe()
 
 	if err != nil {
 		t.Fatalf("Error creating pipe: %s", err)

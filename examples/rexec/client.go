@@ -7,8 +7,10 @@ import (
 	"net"
 	"os"
 
+	"github.com/dmcgowan/streams/spdy"
 	"github.com/docker/libchan"
-	"github.com/docker/libchan/spdy"
+	"github.com/docker/libchan/encoding/msgpack"
+	"github.com/docker/libchan/netchan"
 )
 
 // RemoteCommand is the run parameters to be executed remotely
@@ -42,10 +44,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	transport, err := spdy.NewClientTransport(client)
+	provider, err := spdy.NewSpdyStreamProvider(client, false)
 	if err != nil {
 		log.Fatal(err)
 	}
+	transport := netchan.NewTransport(provider, &msgpack.Codec{})
 	sender, err := transport.NewSendChannel()
 	if err != nil {
 		log.Fatal(err)
