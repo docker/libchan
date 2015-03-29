@@ -95,7 +95,7 @@ func TestChannelEncoding(t *testing.T) {
 			t.Fatalf("Error closing send connection: %s", closeErr)
 		}
 	}
-	SpawnClientServerTest(t, "localhost:12843", ClientSendWrapper(client), ServerReceiveWrapper(server))
+	SpawnClientServerTest(t, ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
 type AbstractionMessage struct {
@@ -133,7 +133,7 @@ func TestChannelAbstraction(t *testing.T) {
 			t.Fatalf("Unexpected message value:\n\tExpected: %s\n\tActual: %s", expected, m1.Message)
 		}
 	}
-	SpawnClientServerTest(t, "localhost:12943", ClientSendWrapper(client), ServerReceiveWrapper(server))
+	SpawnClientServerTest(t, ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
 type MessageWithByteStream struct {
@@ -213,7 +213,7 @@ func TestByteStream(t *testing.T) {
 			t.Fatalf("Error closing byte stream: %s", closeErr)
 		}
 	}
-	SpawnClientServerTest(t, "localhost:12944", ClientSendWrapper(client), ServerReceiveWrapper(server))
+	SpawnClientServerTest(t, ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
 type WrappedMessage struct {
@@ -281,7 +281,7 @@ func TestWrappedByteStreams(t *testing.T) {
 		}
 
 	}
-	SpawnClientServerTest(t, "localhost:12943", ClientSendWrapper(client), ServerReceiveWrapper(server))
+	SpawnClientServerTest(t, ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
 type ReceiverMessage struct {
@@ -356,7 +356,7 @@ func TestSubChannel(t *testing.T) {
 			t.Fatalf("Unexpected message value:\n\tExpected: %s\n\tActual: %s", expected, m3.Message)
 		}
 	}
-	SpawnClientServerTest(t, "localhost:12845", ClientSendWrapper(client), ServerReceiveWrapper(server))
+	SpawnClientServerTest(t, ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 
 type SenderMessage struct {
@@ -432,7 +432,7 @@ func TestSenderSubChannel(t *testing.T) {
 		}
 
 	}
-	SpawnClientServerTest(t, "localhost:12845", ClientSendWrapper(client), ServerReceiveWrapper(server))
+	SpawnClientServerTest(t, ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
 func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s *Transport)) ClientRoutine {
 	return func(t *testing.T, server string) {
@@ -499,23 +499,25 @@ var DumpStackOnTimeout = true
 
 // SpawnClientServer ensures two routines are run in parallel and a
 // failure in one will cause the test to fail
-func SpawnClientServerTest(t *testing.T, host string, client ClientRoutine, server ServerRoutine) {
+func SpawnClientServerTest(t *testing.T, client ClientRoutine, server ServerRoutine) {
 	endClient := make(chan bool)
 	endServer := make(chan bool)
 	listenWait := make(chan bool)
 
+	listener, listenErr := net.Listen("tcp", "localhost:0")
+	if listenErr != nil {
+		t.Fatalf("Error creating listener: %s", listenErr)
+	}
+	addr := listener.Addr().String()
+
 	go func() {
 		defer close(endClient)
 		<-listenWait
-		client(t, host)
+		client(t, addr)
 	}()
 
 	go func() {
 		defer close(endServer)
-		listener, listenErr := net.Listen("tcp", host)
-		if listenErr != nil {
-			t.Fatalf("Error creating listener: %s", listenErr)
-		}
 		defer func() {
 			closeErr := listener.Close()
 			if closeErr != nil {
