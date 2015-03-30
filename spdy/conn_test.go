@@ -157,5 +157,5 @@ func TestMultiTcpByteStream(t *testing.T) {
 
 		listener.Close()
 	}
-	SpawnClientServerTest(t, "localhost:12947", ClientSendWrapper(client), ServerReceiveWrapper(server))
+	SpawnClientServerTest(t, ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
