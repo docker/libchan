@@ -5,9 +5,6 @@ machine:
     - sudo tar -C /usr/local -xzf go.tar.gz
     - sudo chmod a+w /usr/local/go/src/
 
-  hosts:
-    fancy: 127.0.0.1
-
 dependencies:
   post:
     - go get github.com/axw/gocov/gocov
@@ -23,7 +20,3 @@ test:
     - test -z "$(golint ./... | tee /dev/stderr)"
     - go test -race -test.v ./...:
         timeout: 600
-
-general:
-  branches:
-    ignore:
