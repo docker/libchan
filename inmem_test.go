@@ -361,5 +361,39 @@ func SpawnPipeTestRoutines(t *testing.T, s SendTestRoutine, r ReceiveTestRoutine
 			t.Fatal("Timeout")
 		}
 	}
+}
 
+type BenchMessage struct {
+	I int
+}
+
+func BenchmarkRoundTrip(b *testing.B) {
+	r1, s1 := Pipe()
+	r2, s2 := Pipe()
+	go func() {
+		var m BenchMessage
+		for {
+			if err := r1.Receive(&m); err != nil {
+				b.Fatalf("Error receiving BenchMessage: %s", err)
+			}
+			if err := s2.Send(&m); err != nil {
+				b.Fatalf("Error sending BenchMessage: %s", err)
+			}
+		}
+	}()
+
+	var sm BenchMessage
+	var rm BenchMessage
+	for i := 0; i < b.N; i++ {
+		sm.I = i
+		if err := s1.Send(&sm); err != nil {
+			b.Fatalf("Error sending bench message: %s", err)
+		}
+		if err := r2.Receive(&rm); err != nil {
+			b.Fatalf("Error receiving bench message: %s", err)
+		}
+		if rm.I != sm.I {
+			b.Errorf("Wrong int received: %d, expecting: %d", rm.I, sm.I)
+		}
+	}
 }
