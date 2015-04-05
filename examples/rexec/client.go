@@ -42,10 +42,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	transport, err := spdy.NewClientTransport(client)
+	p, err := spdy.NewSpdyStreamProvider(client, false)
 	if err != nil {
 		log.Fatal(err)
 	}
+	transport := spdy.NewTransport(p)
 	sender, err := transport.NewSendChannel()
 	if err != nil {
 		log.Fatal(err)

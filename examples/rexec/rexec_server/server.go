@@ -56,17 +56,18 @@ func main() {
 		}
 	}
 
-	tl, err := spdy.NewTransportListener(listener, spdy.NoAuthenticator)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	for {
-		t, err := tl.AcceptTransport()
+		c, err := listener.Accept()
 		if err != nil {
 			log.Print(err)
 			break
 		}
+		p, err := spdy.NewSpdyStreamProvider(c, true)
+		if err != nil {
+			log.Print(err)
+			break
+		}
+		t := spdy.NewTransport(p)
 
 		go func() {
 			for {
