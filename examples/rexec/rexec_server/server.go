@@ -23,7 +23,7 @@ type RemoteCommand struct {
 	StatusChan libchan.Sender
 }
 
-// CommandResponse is the reponse struct to return to the client
+// CommandResponse is the response struct to return to the client
 type CommandResponse struct {
 	Status int
 }
