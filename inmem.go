@@ -4,101 +4,44 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"sync"
 )
 
 // Pipe returns an inmemory Sender/Receiver pair.
 func Pipe() (Receiver, Sender) {
 	p := new(pipe)
-	p.rwait.L = &p.l
-	p.wwait.L = &p.l
+	p.ch = make(chan interface{})
 	r := &pipeReceiver{p}
 	w := &pipeSender{p}
 	return r, w
 }
 
 type pipe struct {
-	rwait sync.Cond
-	wwait sync.Cond
-	l     sync.Mutex
-	rl    sync.Mutex
-	wl    sync.Mutex
-	rerr  error // if reader closed, error to give writes
-	werr  error // if writer closed, error to give reads
-	msg   interface{}
+	ch chan interface{}
 }
 
-func (p *pipe) send(msg interface{}) error {
-	var err error
-	// One writer at a time.
-	p.wl.Lock()
-	defer p.wl.Unlock()
-
-	p.l.Lock()
-	defer p.l.Unlock()
-	p.msg = msg
-	p.rwait.Signal()
-	for {
-		if p.msg == nil {
-			break
+func (p *pipe) send(msg interface{}) (retErr error) {
+	retErr = nil
+	defer func() {
+		if err := recover(); err == "send on closed channel" {
+			retErr = io.ErrClosedPipe
+		} else if err != nil {
+			panic(err)
 		}
-		if p.rerr != nil {
-			err = p.rerr
-			break
-		}
-		if p.werr != nil {
-			err = io.ErrClosedPipe
-		}
-		p.wwait.Wait()
-	}
-	p.msg = nil // in case of rerr or werr
-	return err
+	}()
+	p.ch <- msg
+	return
 }
 
 func (p *pipe) receive() (interface{}, error) {
-	p.rl.Lock()
-	defer p.rl.Unlock()
-
-	p.l.Lock()
-	defer p.l.Unlock()
-	for {
-		if p.rerr != nil {
-			return nil, io.ErrClosedPipe
-		}
-		if p.msg != nil {
-			break
-		}
-		if p.werr != nil {
-			return nil, p.werr
-		}
-		p.rwait.Wait()
+	msg, ok := <-p.ch
+	if !ok {
+		return nil, io.EOF
 	}
-	msg := p.msg
-	p.msg = nil
-	p.wwait.Signal()
 	return msg, nil
 }
 
-func (p *pipe) rclose(err error) {
-	if err == nil {
-		err = io.ErrClosedPipe
-	}
-	p.l.Lock()
-	defer p.l.Unlock()
-	p.rerr = err
-	p.rwait.Signal()
-	p.wwait.Signal()
-}
-
-func (p *pipe) wclose(err error) {
-	if err == nil {
-		err = io.EOF
-	}
-	p.l.Lock()
-	defer p.l.Unlock()
-	p.werr = err
-	p.rwait.Signal()
-	p.wwait.Signal()
+func (p *pipe) close() {
+	close(p.ch)
 }
 
 type messageDecoder interface {
@@ -164,11 +107,7 @@ func (r *pipeReceiver) SendTo(dst Sender) (int, error) {
 }
 
 func (r *pipeReceiver) Close() error {
-	return r.CloseWithError(nil)
-}
-
-func (r *pipeReceiver) CloseWithError(err error) error {
-	r.p.rclose(err)
+	r.p.close()
 	return nil
 }
 
@@ -206,10 +145,6 @@ func (w *pipeSender) ReceiveFrom(src Receiver) (int, error) {
 }
 
 func (w *pipeSender) Close() error {
-	return w.CloseWithError(nil)
-}
-
-func (w *pipeSender) CloseWithError(err error) error {
-	w.p.wclose(err)
+	w.p.close()
 	return nil
 }
