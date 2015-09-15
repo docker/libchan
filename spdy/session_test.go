@@ -22,7 +22,7 @@ type SimpleMessage struct {
 }
 
 func TestChannelEncoding(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
+	client := func(t *testing.T, sender libchan.Sender, s libchan.Transport) {
 		recv, s1 := libchan.Pipe()
 		r1, send := libchan.Pipe()
 
@@ -56,7 +56,7 @@ func TestChannelEncoding(t *testing.T) {
 			t.Fatalf("Error closing s1: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
+	server := func(t *testing.T, receiver libchan.Receiver, s libchan.Transport) {
 		m1 := &InOutMessage{}
 		receiveErr := receiver.Receive(m1)
 		if receiveErr != nil {
@@ -104,7 +104,7 @@ type AbstractionMessage struct {
 }
 
 func TestChannelAbstraction(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
+	client := func(t *testing.T, sender libchan.Sender, s libchan.Transport) {
 		recv, send := libchan.Pipe()
 
 		m1 := &AbstractionMessage{
@@ -122,7 +122,7 @@ func TestChannelAbstraction(t *testing.T) {
 			t.Fatalf("Error closing sender: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
+	server := func(t *testing.T, receiver libchan.Receiver, s libchan.Transport) {
 		m1 := &AbstractionMessage{}
 		recvErr := receiver.Receive(m1)
 		if recvErr != nil {
@@ -142,8 +142,8 @@ type MessageWithByteStream struct {
 }
 
 func TestByteStream(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
-		bs, bsErr := s.createByteStream()
+	client := func(t *testing.T, sndr libchan.Sender, s libchan.Transport) {
+		bs, bsErr := sndr.(*sender).stream.createByteStream()
 		if bsErr != nil {
 			t.Fatalf("Error creating byte stream: %s", bsErr)
 		}
@@ -158,7 +158,7 @@ func TestByteStream(t *testing.T) {
 			t.Fatalf("Error writing to byte stream: %s", writeErr)
 		}
 
-		sendErr := sender.Send(m1)
+		sendErr := sndr.Send(m1)
 		if sendErr != nil {
 			t.Fatalf("Error sending channel: %s", sendErr)
 		}
@@ -177,7 +177,7 @@ func TestByteStream(t *testing.T) {
 			t.Fatalf("Error closing byte stream: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
+	server := func(t *testing.T, receiver libchan.Receiver, s libchan.Transport) {
 		m1 := &MessageWithByteStream{}
 		recvErr := receiver.Receive(m1)
 		if recvErr != nil {
@@ -186,7 +186,7 @@ func TestByteStream(t *testing.T) {
 		if m1.Stream == nil {
 			t.Fatalf("Missing byte stream")
 		}
-		bs, bsOk := m1.Stream.(*byteStream)
+		bs, bsOk := m1.Stream.(*stream)
 		if !bsOk {
 			t.Fatalf("Wrong byte stream type: %T", m1.Stream)
 		}
@@ -224,7 +224,7 @@ type WrappedMessage struct {
 func TestWrappedByteStreams(t *testing.T) {
 	serverSend := "G'day client ☺"
 	clientReply := "Hello Server, ☢ FYI your stream was transparently copied ☠"
-	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
+	client := func(t *testing.T, sender libchan.Sender, s libchan.Transport) {
 		// Create pipe
 		p1, p2 := net.Pipe()
 
@@ -255,7 +255,7 @@ func TestWrappedByteStreams(t *testing.T) {
 		}
 
 	}
-	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
+	server := func(t *testing.T, receiver libchan.Receiver, s libchan.Transport) {
 		m1 := &WrappedMessage{}
 		recvErr := receiver.Receive(m1)
 		if recvErr != nil {
@@ -290,7 +290,7 @@ type ReceiverMessage struct {
 }
 
 func TestSubChannel(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
+	client := func(t *testing.T, sender libchan.Sender, s libchan.Transport) {
 		remote1, send1 := libchan.Pipe()
 		m1 := &ReceiverMessage{
 			Message:  "WithReceiver",
@@ -322,7 +322,7 @@ func TestSubChannel(t *testing.T) {
 			t.Fatalf("Error closing send2: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
+	server := func(t *testing.T, receiver libchan.Receiver, s libchan.Transport) {
 		m1 := &ReceiverMessage{}
 		if receiveErr := receiver.Receive(m1); receiveErr != nil {
 			t.Fatalf("Error receiving ReceiverMessage: %s", receiveErr)
@@ -365,7 +365,7 @@ type SenderMessage struct {
 }
 
 func TestSenderSubChannel(t *testing.T) {
-	client := func(t *testing.T, sender libchan.Sender, s *Transport) {
+	client := func(t *testing.T, sender libchan.Sender, s libchan.Transport) {
 		recv, remote1 := libchan.Pipe()
 		m1 := &SenderMessage{
 			Message: "WithSender",
@@ -396,7 +396,7 @@ func TestSenderSubChannel(t *testing.T) {
 			t.Fatalf("Error closing send2: %s", closeErr)
 		}
 	}
-	server := func(t *testing.T, receiver libchan.Receiver, s *Transport) {
+	server := func(t *testing.T, receiver libchan.Receiver, s libchan.Transport) {
 		m1 := &SenderMessage{}
 		if receiveErr := receiver.Receive(m1); receiveErr != nil {
 			t.Fatalf("Error receiving SenderMessage: %s", receiveErr)
@@ -434,17 +434,19 @@ func TestSenderSubChannel(t *testing.T) {
 	}
 	SpawnClientServerTest(t, ClientSendWrapper(client), ServerReceiveWrapper(server))
 }
-func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s *Transport)) ClientRoutine {
+func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s libchan.Transport)) ClientRoutine {
 	return func(t *testing.T, server string) {
 		conn, connErr := net.Dial("tcp", server)
 		if connErr != nil {
 			t.Fatalf("Error dialing server: %s", connErr)
 		}
 
-		session, sessionErr := newSession(conn, false)
+		// Use SPDY
+		provider, sessionErr := NewSpdyStreamProvider(conn, false)
 		if sessionErr != nil {
 			t.Fatalf("Error creating session: %s", sessionErr)
 		}
+		session := NewTransport(provider)
 
 		sender, senderErr := session.NewSendChannel()
 		if senderErr != nil {
@@ -458,24 +460,25 @@ func ClientSendWrapper(f func(t *testing.T, c libchan.Sender, s *Transport)) Cli
 			t.Fatalf("Error closing sender: %s", closeErr)
 		}
 
-		closeErr = session.Close()
+		closeErr = session.(*Transport).Close()
 		if closeErr != nil {
 			t.Fatalf("Error closing connection: %s", closeErr)
 		}
 	}
 }
 
-func ServerReceiveWrapper(f func(t *testing.T, c libchan.Receiver, s *Transport)) ServerRoutine {
+func ServerReceiveWrapper(f func(t *testing.T, c libchan.Receiver, s libchan.Transport)) ServerRoutine {
 	return func(t *testing.T, listener net.Listener) {
 		conn, connErr := listener.Accept()
 		if connErr != nil {
 			t.Fatalf("Error accepting connection: %s", connErr)
 		}
 
-		session, sessionErr := newSession(conn, true)
+		provider, sessionErr := NewSpdyStreamProvider(conn, true)
 		if sessionErr != nil {
 			t.Fatalf("Error creating session: %s", sessionErr)
 		}
+		session := NewTransport(provider)
 
 		receiver, receiverErr := session.WaitReceiveChannel()
 		if receiverErr != nil {
@@ -484,7 +487,7 @@ func ServerReceiveWrapper(f func(t *testing.T, c libchan.Receiver, s *Transport)
 
 		f(t, receiver, session)
 
-		closeErr := session.Close()
+		closeErr := session.(*Transport).Close()
 		if closeErr != nil {
 			t.Fatalf("Error closing connection: %s", closeErr)
 		}
