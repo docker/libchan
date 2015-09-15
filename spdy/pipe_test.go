@@ -9,7 +9,50 @@ import (
 	"time"
 
 	"github.com/docker/libchan"
+	"github.com/docker/libchan/encoding/msgpack"
 )
+
+// testPipe creates a top-level channel pipe using an in memory
+// transport using spdy and msgpack
+func testPipe() (libchan.Receiver, libchan.Sender, error) {
+	c1, c2 := net.Pipe()
+
+	s1, err := NewSpdyStreamProvider(c1, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	t1 := NewTransport(s1, &msgpack.Codec{})
+
+	s2, err := NewSpdyStreamProvider(c2, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	t2 := NewTransport(s2, &msgpack.Codec{})
+
+	var recv libchan.Receiver
+	waitError := make(chan error)
+
+	go func() {
+		var err error
+		recv, err = t2.WaitReceiveChannel()
+		waitError <- err
+	}()
+
+	send, senderErr := t1.NewSendChannel()
+	if senderErr != nil {
+		c1.Close()
+		c2.Close()
+		return nil, nil, senderErr
+	}
+
+	receiveErr := <-waitError
+	if receiveErr != nil {
+		c1.Close()
+		c2.Close()
+		return nil, nil, receiveErr
+	}
+	return recv, send, nil
+}
 
 type PipeMessage struct {
 	Message string
@@ -107,7 +150,7 @@ func SpawnPipeTest(t *testing.T, client PipeSenderRoutine, server PipeReceiverRo
 	endClient := make(chan bool)
 	endServer := make(chan bool)
 
-	receiver, sender, err := Pipe()
+	receiver, sender, err := testPipe()
 	if err != nil {
 		t.Fatalf("Error creating pipe: %s", err)
 	}
