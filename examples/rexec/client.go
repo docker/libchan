@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/docker/libchan"
+	"github.com/docker/libchan/encoding/msgpack"
 	"github.com/docker/libchan/spdy"
 )
 
@@ -46,7 +47,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	transport := spdy.NewTransport(p)
+	transport := spdy.NewTransport(p, &msgpack.Codec{})
 	sender, err := transport.NewSendChannel()
 	if err != nil {
 		log.Fatal(err)
