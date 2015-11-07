@@ -159,10 +159,10 @@ func (s *Transport) createSubStream(parentID uint64) (*stream, error) {
 		session:     s,
 	}
 
-	// TODO: Do not store reference
-	s.streamC.L.Lock()
-	s.streams[referenceID] = newStream
-	s.streamC.L.Unlock()
+	// TODO: hold reference to the newly created stream
+	// for possible cleanup. This stream should not be put
+	// in the streams maps which holds remotely created
+	// streams and will can have reference id conflicts.
 
 	return newStream, nil
 
