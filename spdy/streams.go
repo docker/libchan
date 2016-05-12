@@ -40,6 +40,7 @@ type spdyStream struct {
 
 type spdyStreamListener struct {
 	listenChan <-chan *spdyStream
+	closeChan  <-chan bool
 }
 
 type spdyStreamProvider struct {
@@ -62,7 +63,6 @@ func NewSpdyStreamProvider(conn net.Conn, server bool) (StreamProvider, error) {
 		listenChan: make(chan *spdyStream),
 	}
 	go spdyConn.Serve(provider.newStreamHandler)
-	// Handle spdyConn shutdown
 
 	return provider, nil
 }
@@ -99,11 +99,17 @@ func (p *spdyStreamProvider) Close() error {
 func (p *spdyStreamProvider) Listen() Listener {
 	return &spdyStreamListener{
 		listenChan: p.listenChan,
+		closeChan:  p.conn.CloseChan(),
 	}
 }
 
 func (l *spdyStreamListener) Accept() (Stream, error) {
-	stream := <-l.listenChan
+	var stream *spdyStream
+	select {
+	case stream = <-l.listenChan:
+	case <-l.closeChan:
+		// Handle spdyConn shutdown
+	}
 	if stream == nil {
 		return nil, io.EOF
 	}
