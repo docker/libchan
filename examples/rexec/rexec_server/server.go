@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/docker/libchan"
+	"github.com/docker/libchan/encoding/msgpack"
 	"github.com/docker/libchan/spdy"
 )
 
@@ -67,7 +68,7 @@ func main() {
 			log.Print(err)
 			break
 		}
-		t := spdy.NewTransport(p)
+		t := spdy.NewTransport(p, &msgpack.Codec{})
 
 		go func() {
 			for {

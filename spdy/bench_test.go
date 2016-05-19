@@ -10,10 +10,6 @@ import (
 	"github.com/docker/libchan"
 )
 
-var (
-	testPipe = Pipe
-)
-
 type SimpleStruct struct {
 	Value int
 }
