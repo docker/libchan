@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/dmcgowan/msgpack"
-	"github.com/docker/libchan"
+	"github.com/saahn/libchan"
 )
 
 var (
