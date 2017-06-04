@@ -1,6 +1,6 @@
 machine:
   pre:
-    - curl -o go.tar.gz -sL https://golang.org/dl/go1.4.linux-amd64.tar.gz
+    - curl -o go.tar.gz -sL https://golang.org/dl/go1.8.3.linux-amd64.tar.gz
     - sudo rm -rf /usr/local/go
     - sudo tar -C /usr/local -xzf go.tar.gz
     - sudo chmod a+w /usr/local/go/src/
