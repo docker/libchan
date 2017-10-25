@@ -134,6 +134,13 @@ func (s *Transport) getStream(referenceID uint64) *stream {
 
 }
 
+func (s *Transport) removeStream(stream *stream) {
+	s.streamC.L.Lock()
+	delete(s.streams, stream.referenceID)
+	s.streamC.L.Unlock()
+	s.streamC.Broadcast()
+}
+
 // Close closes the underlying stream provider
 func (s *Transport) Close() error {
 	return s.provider.Close()
@@ -240,7 +247,7 @@ func (s *sender) Send(message interface{}) error {
 // Close closes the underlying stream, causing any subsequent
 // sends to throw an error and receives to return EOF.
 func (s *sender) Close() error {
-	return s.stream.stream.Close()
+	return s.stream.Close()
 }
 
 // Receive receives a message sent across the channel from
@@ -304,5 +311,6 @@ func (s *stream) Write(b []byte) (int, error) {
 }
 
 func (s *stream) Close() error {
+	defer s.session.removeStream(s)
 	return s.stream.Close()
 }
