@@ -48,7 +48,7 @@ protocols because they often rely heavily on events, bi-directional
 communication, stream multiplexing, and some form of data synchronization.
 Sometimes these services have a component which requires raw socket access,
 either for performance (file transfer, event firehose, database access) or
-simply because they have their own protocol (dns, smtp, sql, ssh,
+simply because they have their own protocol (dns, smtp, SQL, ssh,
 zeromq, etc). These components typically need a separate set of tools
 because they are outside the scope of the REST and RPC tools. If there is
 also a websocket or ServerEvents transport, those require yet another layer
@@ -74,7 +74,7 @@ uses fd passing which makes it suitable for high-performance IPC. The
 tcp transport uses dedicated http2 streams. And as a bonus extension, a
 built-in  tcp gateway can be used to proxy raw network sockets without
 extra overhead. That means libchan services can be used as smart gateways to a
-sql database, ssh or file transfer service, with unified auth, discovery
+SQL database, ssh or file transfer service, with unified auth, discovery
 and tooling and without performance penalty.
 
 ## Example usage
