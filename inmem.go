@@ -47,7 +47,7 @@ func (r pReceiver) Receive(msg interface{}) error {
 			case messageDecoder:
 				return rval.Decode(msg)
 			default:
-				return fmt.Errorf("Cannot receive %T into %T", rmsg, msg)
+				return fmt.Errorf("cannot receive %T into %T", rmsg, msg)
 			}
 		}
 	}
